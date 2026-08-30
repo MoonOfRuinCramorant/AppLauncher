@@ -77,17 +77,8 @@
     window.api.fbDragEnd();
 
     if (!state.hasMoved && Date.now() - state.mouseDownTime < 400) {
-      // It's a click, not a drag. Suppress the ball's transition/hover-scale
-      // for one frame so the click -> expand -> window resize happens in a
-      // single paint — otherwise the lingering hover transform combines
-      // with the absolute positioning of popup-horizontal mode and creates a
-      // visible "blink" of the ball at the moment of expand.
-      ball.classList.add('no-transition');
+      // It's a click, not a drag.
       handleClick();
-      // After two frames (so the resize has been laid out) re-enable transitions.
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        ball.classList.remove('no-transition');
-      }));
     }
   });
 
@@ -170,14 +161,26 @@
     state.isExpanded = true;
     const result = await window.api.fbExpand();
 
-    // Apply the popup presentation style. The main process computes the
-    // window geometry and returns which side the ball sits on for the
-    // horizontal bar ('left' = bar extends rightward, 'right' = leftward).
+    // In horizontal mode the main process always returns direction='right',
+    // meaning the bar grew LEFTWARD from the ball's original screen
+    // position. The ball itself stays put — we just toggle the layout
+    // class so the popup's right-padding leaves space for it.
     const isHorizontal = !!(result && result.style === 'horizontal');
-    const ballSide = isHorizontal ? (result.direction === 'right' ? 'right' : 'left') : null;
     document.body.classList.toggle('popup-horizontal', isHorizontal);
-    document.body.classList.toggle('popup-hbar-left', ballSide === 'left');
-    document.body.classList.toggle('popup-hbar-right', ballSide === 'right');
+    document.body.classList.remove('popup-hbar-left', 'popup-hbar-right');
+    if (isHorizontal) {
+      document.body.classList.add('popup-hbar-right'); // ball anchored at right end
+    }
+
+    // Suppress the transition for one frame so the layout swap doesn't
+    // shimmer — adding popup-horizontal changes #ball from a flow element
+    // to position:absolute, and the transition's `transform` keyframe
+    // would briefly interpolate between the old and new paint even when
+    // visual position is identical.
+    ball.classList.add('no-transition');
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      ball.classList.remove('no-transition');
+    }));
 
     // Load recent apps
     const recentApps = await window.api.fbGetRecentApps();

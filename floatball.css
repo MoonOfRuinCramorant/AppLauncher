@@ -33,7 +33,7 @@ body {
   --fb-bar-radius: 14px;
 }
 
-/* Dark-theme defaults — applied when <body class="dark-theme bar-theme-dark"> */
+/* Dark-theme defaults — applied when <html class="bar-theme-dark"> */
 :root.bar-theme-dark {
   --fb-bar-bg: rgba(45, 45, 45, 0.96);
   --fb-bar-border: rgba(255, 255, 255, 0.08);
@@ -61,6 +61,13 @@ body {
   transition: transform 0.15s ease, box-shadow 0.15s ease;
   margin: 4px;
   position: relative;
+  /* Keep layout stable between normal/horizontal modes — both put the
+     ball at top:8px relative to the window; the renderer only flips
+     the "left/right" anchor when the horizontal bar opens. */
+  left: auto;
+  right: auto;
+  top: auto;
+  transform: none;
 }
 
 .float-ball::after {
@@ -144,46 +151,6 @@ body.custom-icon.dark-theme .float-ball:hover {
   cursor: grabbing;
 }
 
-/* ============================================
-   Anti-flicker: click-to-expand UX smoothing
-   ============================================
-   The ball uses transform: scale for hover/active. In horizontal popup mode
-   the ball is switched to position: absolute + translateY(-50%). If both
-   transforms apply at the moment of expand we get one frame where the
-   compositor paints the old hover-scale combined with the new translate —
-   a visible jump. The .no-transition utility disables all transitions for
-   a single frame so the size/position change happens invisibly. */
-
-.float-ball,
-.float-ball::after,
-.float-ball * {
-  /* default; overridden by .no-transition below during expand */
-}
-
-.float-ball.no-transition,
-.float-ball.no-transition::after,
-.float-ball.no-transition * {
-  transition: none !important;
-  animation: none !important;
-}
-
-/* When the horizontal popup is open the ball is no longer hover-draggable,
-   so disable the hover scale (which conflicts with the absolute
-   translateY(-50%) positioning and causes the visible "blink"). */
-body.popup-horizontal .float-ball,
-body.popup-horizontal .float-ball:hover,
-body.popup-horizontal .float-ball:active {
-  transform: none !important;
-}
-
-body.popup-horizontal .float-ball {
-  /* The ball no longer needs its 4px margin — the popup-horizontal mode
-     positions it absolutely at left:4px (or right:4px) and centers it
-     vertically with translateY(-50%). Reset the margin so the box doesn't
-     leak past the window and cause compositing artifacts. */
-  margin: 0;
-}
-
 /* ========== Popup (vertical list mode) ========== */
 
 .float-popup {
@@ -199,6 +166,7 @@ body.popup-horizontal .float-ball {
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--fb-bar-border, rgba(0, 0, 0, 0.06));
   animation: popupAppear 0.18s ease;
+  overflow: hidden;
 }
 
 @keyframes popupAppear {
@@ -225,6 +193,7 @@ body.popup-horizontal .float-ball {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  overflow: hidden;
 }
 
 .popup-app-item {
@@ -280,52 +249,59 @@ body.popup-horizontal .float-ball {
 }
 
 /* ========== Horizontal (Icon Bar) Popup Mode ==========
-   The window becomes a wide bar with the ball attached at one end and
-   up to 5 recent-app icons beside it. The app name appears in a tooltip
-   below the hovered icon (rendered as a real <div id="appTooltip"> for
-   stacking-context reasons — see comment in floatball.html). */
+   Layout (always — bar appears on the LEFT of the ball):
+     |<- bar items →|<- gap ->|<- ball ->|
+     left:0                                                    right:0
+   The window expands leftward from the ball's original screen position;
+   the ball anchors to the right edge of the new window at top:8px so it
+   lands at almost the same screen coordinates it had in normal mode. No
+   transform/translate is applied — the ball simply doesn't move. */
 
-/* Ball anchors to one end of the bar, vertically centered. */
 body.popup-horizontal #ball {
   position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  margin: 0;
-}
-
-/* Ball on the left end -> the bar extends to the right. */
-body.popup-horizontal.popup-hbar-left #ball {
-  left: 4px;
-}
-
-/* Ball on the right end -> the bar extends to the left. */
-body.popup-horizontal.popup-hbar-right #ball {
+  /* Anchor on the right edge so the ball stays put when the bar opens.
+     top:4px matches the margin:4px the ball uses in collapsed mode — since
+     the new window keeps the same height (56px), the ball lands at
+     EXACTLY its previous screen coordinates. */
+  left: auto;
   right: 4px;
+  top: 4px;
+  bottom: auto;
+  transform: none;
+  margin: 0;
+  z-index: 2;
 }
 
-/* The bar itself fills the window, keeping clear of the ball. */
+/* Drop the hover/active scale entirely when the popup is open — the
+   ball is in fixed position now and any transform interpolation would
+   cause a visible "blink". */
+body.popup-horizontal #ball:hover,
+body.popup-horizontal #ball:active {
+  transform: none;
+}
+
+/* The horizontal bar fills the window height and leaves a clean slot on
+   the right for the ball. No animation (prevents flash on open), no
+   visible chrome (transparent background), no scrollbars (overflow:hidden
+   on every layer). */
 body.popup-horizontal .float-popup {
   position: absolute;
   top: 0;
   left: 0;
-  width: 100%;
-  height: 100%;
+  right: 60px;          /* ball (48) + 12px gap */
+  bottom: 0;
   display: flex;
   align-items: center;
-  justify-content: center;
-  border-radius: var(--fb-bar-radius, 14px);
-  padding: 8px;
-  animation: popupAppear 0.18s ease;
-}
-
-body.popup-horizontal.popup-hbar-left .float-popup {
-  padding-left: 62px;
   justify-content: flex-start;
-}
-
-body.popup-horizontal.popup-hbar-right .float-popup {
-  padding-right: 62px;
-  justify-content: flex-end;
+  border-radius: var(--fb-bar-radius, 14px);
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  animation: none;       /* No popupAppear — was the visible flash */
+  overflow: hidden;     /* clip overflow, no scrollbar ever */
 }
 
 body.popup-horizontal .popup-header {
@@ -335,8 +311,11 @@ body.popup-horizontal .popup-header {
 body.popup-horizontal .popup-app-list {
   display: flex;
   flex-direction: row;
-  align-items: center;
+  align-items: center;        /* vertically centered = same height as ball */
   gap: 6px;
+  flex-wrap: nowrap;          /* single row — never wrap to a 2nd line */
+  max-width: 100%;
+  overflow: hidden;           /* extra safety: no horizontal scrollbar */
 }
 
 body.popup-horizontal .popup-app-item {
@@ -348,11 +327,13 @@ body.popup-horizontal .popup-app-item {
   justify-content: center;
   border-radius: 12px;
   position: relative;
+  flex-shrink: 0;             /* prevent items from being squashed */
 }
 
 body.popup-horizontal .popup-app-item img {
   width: 36px;
   height: 36px;
+  object-fit: contain;
 }
 
 body.popup-horizontal .popup-app-item-icon {

@@ -246,7 +246,13 @@ const POPUP_WIDTH = 190;
 const POPUP_HEIGHT = 340;
 
 // Horizontal (icon-bar) popup geometry. The bar holds up to 5 recent-app
-// icons side by side; the ball stays attached at one end of the bar.
+// icons side by side; the ball stays attached at the right end of the bar.
+//
+// Window size:
+//   width  = HBAR_POPUP_WIDTH (bar area) + BALL_SIZE + HBAR_BALL_GAP
+//   height = BALL_SIZE (== 56) — same as the collapsed window so the
+//            vertical jump is zero; the bar and ball are vertically
+//            centered via CSS.
 const HBAR_ICON = 48;         // icon tile size
 const HBAR_GAP = 6;           // gap between tiles
 const HBAR_PAD = 8;           // inner padding of the bar
@@ -254,7 +260,7 @@ const HBAR_ITEMS = 5;         // max recent apps
 const HBAR_BALL_GAP = 12;     // gap between the ball and the bar
 const HBAR_POPUP_WIDTH = HBAR_ITEMS * HBAR_ICON + (HBAR_ITEMS - 1) * HBAR_GAP + HBAR_PAD * 2;
 const HBAR_WIDTH = HBAR_POPUP_WIDTH + BALL_SIZE + HBAR_BALL_GAP;
-const HBAR_HEIGHT = HBAR_ICON + HBAR_PAD * 2 + 8; // 72: room for the ball too
+const HBAR_HEIGHT = BALL_SIZE; // 56: no vertical resize -> ball does not shift
 
 // Clamp the ball so it stays FULLY inside the visible work area of the
 // display nearest to the given point. This is the safety net that makes
@@ -1058,19 +1064,22 @@ ipcMain.handle('floatball:expand', () => {
   const popupStyle = config.settings.floatBallPopupStyle || 'vertical';
 
   if (popupStyle === 'horizontal') {
-    const ballCenterX = x + BALL_SIZE / 2;
-    const screenCenterX = workArea.x + workArea.width / 2;
-    // Which side of the bar the ball attaches to. 'left' -> ball on the
-    // left end of the bar (bar extends rightward); 'right' -> bar extends
-    // leftward from the ball.
-    const ballSide = ballCenterX < screenCenterX ? 'left' : 'right';
-
-    let newX = ballSide === 'left' ? x : x - (HBAR_WIDTH - BALL_SIZE);
-    // Vertically center the bar on the ball.
+    // Bar ALWAYS appears on the LEFT of the ball (per user preference:
+    // the ball must NOT move when the bar opens, and the bar grows
+    // leftward from the ball's current screen position).
+    //
+    // Geometry: the window's right edge is anchored to the original right
+    // edge of the ball (x + BALL_SIZE), and its vertical center is on the
+    // ball's vertical center. The bar fills the left part of the new
+    // window, the ball stays where it was.
+    let newX = x - (HBAR_WIDTH - BALL_SIZE);
     let newY = y - (HBAR_HEIGHT - BALL_SIZE) / 2;
 
-    // Clamp fully inside the work area.
-    newX = Math.max(workArea.x, Math.min(newX, workArea.x + workArea.width - HBAR_WIDTH));
+    // Clamp inside the work area. We never want to drop the ball off
+    // screen, so when there's no room on the left we keep the window's
+    // left edge at the work-area left (the bar gets clipped on its left
+    // side rather than the ball shifting right).
+    newX = Math.max(workArea.x, newX);
     newY = Math.max(workArea.y, Math.min(newY, workArea.y + workArea.height - HBAR_HEIGHT));
 
     fbLog('[floatball] expand horizontal at', x, y, '->', newX, newY, HBAR_WIDTH + 'x' + HBAR_HEIGHT);
@@ -1080,7 +1089,8 @@ ipcMain.handle('floatball:expand', () => {
       width: HBAR_WIDTH,
       height: HBAR_HEIGHT
     });
-    return { style: 'horizontal', direction: ballSide };
+    // Ball is always at the right end of the bar in horizontal mode.
+    return { style: 'horizontal', direction: 'right' };
   }
 
   // ========== Vertical (list) popup ==========
@@ -1293,35 +1303,40 @@ async function chooseFloatBallIcon() {
 
     const filePath = result.filePaths[0];
 
-    // Decode through nativeImage so the crop window always receives a PNG
-    // data URL it can render. Passing the raw bytes through (previous
-    // approach) failed for formats Chromium cannot decode from a mismatched
-    // mime type (e.g. .ico, .heic, or a file whose extension lies about its
-    // content) — the crop container ended up black with no image at all.
+    // Decode the picked image into a PNG data URL that the crop window's
+    // renderer can always draw. We previously sent the raw file bytes
+    // through with a MIME guessed from the extension — that silently
+    // fails for formats Chromium can't decode from a "lying" extension
+    // (notably ICO/WebP/BMP) and the crop container ends up blank because
+    // the <img> load errors out without any visible error in this window.
+    //
+    // Strategy:
+    //  1. Try nativeImage.createFromBuffer() — Electron decodes the bytes
+    //     using format sniffers that handle ICO/WebP/BMP/GIF etc.
+    //  2. Fall back to a magic-byte-detected raw data URL.
     let dataUrl = null;
     try {
-      const nativeImg = nativeImage.createFromPath(filePath);
+      const buffer = fs.readFileSync(filePath);
+      const nativeImg = nativeImage.createFromBuffer(buffer);
       if (!nativeImg.isEmpty()) {
         const png = nativeImg.toPNG();
         if (png && png.length > 0) {
           dataUrl = `data:image/png;base64,${png.toString('base64')}`;
         }
       }
-    } catch (_) { /* fall through to raw data URL below */ }
-
-    if (!dataUrl) {
-      // Fallback: embed the raw file as-is (still works for normal images).
-      const buffer = fs.readFileSync(filePath);
-      const ext = path.extname(filePath).toLowerCase();
-      const mimeMap = {
-        '.png': 'image/png',
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.bmp': 'image/bmp',
-        '.gif': 'image/gif',
-        '.webp': 'image/webp'
-      };
-      dataUrl = `data:${mimeMap[ext] || 'image/png'};base64,${buffer.toString('base64')}`;
+      if (!dataUrl) {
+        // Last-resort fallback: detect MIME from the file's magic bytes so
+        // the renderer doesn't get told "this is a PNG" when the bytes are
+        // actually a JPEG/ICO/etc. (root cause of the "blank crop window"
+        // regression the user kept seeing).
+        const mime = detectImageMimeFromBuffer(buffer);
+        dataUrl = `data:${mime};base64,${buffer.toString('base64')}`;
+        fbLog('[icon] nativeImage empty, falling back to raw data URL with detected mime:', mime);
+      }
+    } catch (err) {
+      fbLog('[icon] chooseFloatBallIcon read error', err.message);
+      console.error('Failed to decode float ball icon:', err);
+      return;
     }
 
     // Open the crop window so the user can crop the image into a circular
@@ -1342,6 +1357,29 @@ async function chooseFloatBallIcon() {
 // A small modal window that lets the user crop the picked image into a
 // circular float-ball icon. The ball itself is alwaysOnTop, so this window
 // is raised to the 'screen-saver' level to sit above it.
+
+// Magic-byte MIME detector — used when nativeImage fails to decode a file
+// (e.g. some ICO variants), so the renderer still receives a data URL with
+// a correct content-type hint.
+function detectImageMimeFromBuffer(buf) {
+  if (!buf || buf.length < 4) return 'image/png';
+  const b0 = buf[0], b1 = buf[1], b2 = buf[2], b3 = buf[3];
+  // PNG: 89 50 4E 47
+  if (b0 === 0x89 && b1 === 0x50 && b2 === 0x4E && b3 === 0x47) return 'image/png';
+  // JPEG: FF D8 FF
+  if (b0 === 0xFF && b1 === 0xD8 && b2 === 0xFF) return 'image/jpeg';
+  // GIF: 47 49 46 38
+  if (b0 === 0x47 && b1 === 0x49 && b2 === 0x46 && b3 === 0x38) return 'image/gif';
+  // BMP: 42 4D
+  if (b0 === 0x42 && b1 === 0x4D) return 'image/bmp';
+  // ICO: 00 00 01 00 (icon) or 00 00 02 00 (cursor)
+  if (b0 === 0x00 && b1 === 0x00 && (b2 === 0x01 || b2 === 0x02) && b3 === 0x00) return 'image/x-icon';
+  // WebP: "RIFF" .... "WEBP"
+  if (b0 === 0x52 && b1 === 0x49 && b2 === 0x46 && b3 === 0x46 &&
+      buf.length >= 12 &&
+      buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return 'image/webp';
+  return 'image/png';
+}
 
 let cropWindow = null;
 let cropResolve = null;

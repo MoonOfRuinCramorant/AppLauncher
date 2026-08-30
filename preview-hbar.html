@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>FloatBall 水平选择框 - 布局预览</title>
+  <link rel="stylesheet" href="floatball.css">
+  <style>
+    /* Page chrome */
+    body {
+      background: #2a2a2a;
+      margin: 40px;
+      color: #eee;
+      font-family: "Segoe UI", sans-serif;
+    }
+    h1 { font-size: 18px; margin-bottom: 12px; }
+    .preview-wrap {
+      background: linear-gradient(135deg, #1e3a8a, #0c4a6e);
+      padding: 20px;
+      border-radius: 8px;
+      width: 760px;
+      margin: 0 auto;
+    }
+    .label {
+      font-size: 13px;
+      color: #ccc;
+      margin-bottom: 6px;
+    }
+    .win {
+      /* Simulate a transparent always-on-top window containing the
+         floatball UI. The browser viewport mirrors the Electron window. */
+      width: 348px;
+      height: 56px;
+      background: rgba(255, 255, 255, 0.10);
+      border: 1px dashed rgba(255, 255, 255, 0.25);
+      position: relative;
+      border-radius: 4px;
+      margin: 12px 0 8px 0;
+      overflow: visible;
+    }
+    /* Full window invisible in this preview so we can see the bar layout */
+    .win-realistic {
+      width: 348px;
+      height: 56px;
+      background: rgba(0, 0, 0, 0.3);
+      position: relative;
+      border-radius: 14px;
+      margin: 12px 0;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    }
+    .margin-note {
+      font-size: 11px;
+      color: #888;
+      margin-left: 12px;
+    }
+  </style>
+</head>
+<body>
+  <h1>FloatBall 水平选择框 - 布局预览</h1>
+  <p class="margin-note">单击悬浮球时：球不动、左侧弹出水平框、无滚动条、应用与球同高</p>
+
+  <div class="label">▶ 收起态（单击前）：56×56 悬浮球</div>
+  <div class="win-realistic" style="width: 56px;">
+    <div class="float-ball" style="position: absolute; left: 4px; top: 4px;">
+      <span class="ball-icon">🚀</span>
+    </div>
+  </div>
+
+  <div class="label">▶ 展开态（单击后）：348×56 窗口，悬浮球仍在右侧原位置</div>
+  <div class="preview-wrap">
+    <div class="win-realistic">
+      <body class="popup-horizontal popup-hbar-right">
+        <!-- Float ball: anchored on right edge with same coordinates as collapsed state -->
+        <div id="ball" class="float-ball">
+          <span class="ball-icon">🚀</span>
+        </div>
+        <!-- Popup: fills the left side, transparent, items centered vertically -->
+        <div id="popup" class="float-popup" style="display: block;">
+          <div class="popup-app-list" style="display: flex;">
+            <div class="popup-app-item"><div style="font-size: 26px;">📁</div></div>
+            <div class="popup-app-item"><div style="font-size: 26px;">🌐</div></div>
+            <div class="popup-app-item"><div style="font-size: 26px;">💻</div></div>
+            <div class="popup-app-item"><div style="font-size: 26px;">🎵</div></div>
+            <div class="popup-app-item"><div style="font-size: 26px;">⚙️</div></div>
+          </div>
+        </div>
+      </body>
+    </div>
+  </div>
+
+  <p class="margin-note">
+    ✓ 球的右侧边缘仍在原屏幕位置（窗口左扩 / 右沿不动）<br>
+    ✓ 球和应用图标都在 top:4-52 区间（垂直中心 = 28）<br>
+    ✓ 列表项 flex-row + overflow:hidden，永不出现滚动条
+  </p>
+</body>
+</html>
