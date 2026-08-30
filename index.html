@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self';">
+  <title>应用启动器</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Background layer -->
+  <div class="bg-layer" id="bgLayer"></div>
+
+  <!-- Title Bar (draggable area) -->
+  <div class="titlebar">
+    <div class="titlebar-title">
+      <span class="titlebar-icon">🚀</span>
+      <span>应用启动器</span>
+    </div>
+  </div>
+
+  <!-- Main App Container -->
+  <div class="app-container">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-search">
+        <div class="search-box">
+          <svg class="search-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M11 11l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          <input type="text" id="searchInput" placeholder="搜索应用..." autocomplete="off" />
+          <button class="search-clear" id="searchClear" title="清除" style="display:none;">✕</button>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav" id="sidebarNav">
+        <!-- Built-in views -->
+        <div class="nav-item active" data-view="all">
+          <span class="nav-icon">📦</span>
+          <span class="nav-label">全部应用</span>
+          <span class="nav-badge" id="badge-all"></span>
+        </div>
+        <div class="nav-item" data-view="recent">
+          <span class="nav-icon">🕐</span>
+          <span class="nav-label">最近使用</span>
+          <span class="nav-badge" id="badge-recent"></span>
+        </div>
+        <div class="nav-item" data-view="mostUsed">
+          <span class="nav-icon">🔥</span>
+          <span class="nav-label">常用应用</span>
+          <span class="nav-badge" id="badge-mostUsed"></span>
+        </div>
+
+        <div class="nav-divider"></div>
+        <div class="nav-section-label">分组</div>
+        <div class="nav-groups" id="navGroups">
+          <!-- Custom groups rendered here -->
+        </div>
+
+        <div class="nav-item nav-add-group" id="addGroupBtn">
+          <span class="nav-icon">➕</span>
+          <span class="nav-label">新建分组</span>
+        </div>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button class="footer-settings-btn" id="footerSettingsBtn" title="设置">
+          <span class="settings-gear">⚙️</span>
+          <span>设置</span>
+        </button>
+        <div class="footer-info" id="footerInfo">
+          <span id="appCount">0 个应用</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <div class="main-header">
+        <div class="main-title">
+          <h1 id="viewTitle">全部应用</h1>
+          <span class="view-subtitle" id="viewSubtitle"></span>
+        </div>
+        <div class="main-actions">
+          <div class="view-toggle" id="viewToggle">
+            <button class="view-toggle-btn active" data-mode="grid" title="网格视图">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                <rect x="1" y="1" width="6" height="6" rx="1"/>
+                <rect x="9" y="1" width="6" height="6" rx="1"/>
+                <rect x="1" y="9" width="6" height="6" rx="1"/>
+                <rect x="9" y="9" width="6" height="6" rx="1"/>
+              </svg>
+            </button>
+            <button class="view-toggle-btn" data-mode="list" title="列表视图">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                <rect x="1" y="2" width="14" height="2" rx="1"/>
+                <rect x="1" y="7" width="14" height="2" rx="1"/>
+                <rect x="1" y="12" width="14" height="2" rx="1"/>
+              </svg>
+            </button>
+          </div>
+          <select id="sortSelect" class="sort-select" title="排序方式">
+            <option value="manual">手动排序</option>
+            <option value="name">按名称</option>
+            <option value="lastLaunched">按最近使用</option>
+            <option value="mostUsed">按使用频率</option>
+          </select>
+          <button class="btn btn-primary" id="addAppBtn">
+            <span>＋</span> 添加应用
+          </button>
+        </div>
+      </div>
+
+      <div class="app-grid" id="appGrid">
+        <!-- App cards rendered here -->
+      </div>
+
+      <div class="app-list" id="appList" style="display:none;">
+        <!-- App list items rendered here -->
+      </div>
+
+      <div class="empty-state" id="emptyState" style="display:none;">
+        <div class="empty-icon">📂</div>
+        <div class="empty-title" id="emptyTitle">还没有添加应用</div>
+        <div class="empty-desc" id="emptyDesc">点击右上角"添加应用"按钮，导入你常用的应用程序</div>
+        <button class="btn btn-primary btn-lg" id="emptyAddBtn">＋ 添加第一个应用</button>
+      </div>
+    </main>
+  </div>
+
+  <!-- Add/Edit App Modal -->
+  <div class="modal-overlay" id="appModal" style="display:none;">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="modalTitle">添加应用</h2>
+        <button class="modal-close" id="modalClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <label>应用程序路径 <span class="required">*</span></label>
+          <div class="form-input-group">
+            <input type="text" id="appPathInput" placeholder="选择 .exe / .docx / .mp4 / 文件夹 / 系统文件夹" readonly />
+            <button class="btn btn-secondary" id="browseBtn">浏览文件</button>
+            <button class="btn btn-secondary" id="browseFolderBtn">选择文件夹</button>
+            <button class="btn btn-secondary" id="browseSystemBtn">系统文件夹</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>应用名称 <span class="required">*</span></label>
+          <input type="text" id="appNameInput" placeholder="输入应用名称" />
+        </div>
+        <div class="form-row form-row-two">
+          <div>
+            <label>所属分组</label>
+            <select id="appGroupSelect" class="form-select"></select>
+          </div>
+          <div>
+            <label>启动参数（可选）</label>
+            <input type="text" id="appArgsInput" placeholder="例如: --fullscreen" />
+          </div>
+        </div>
+        <div class="form-row">
+          <label>应用图标</label>
+          <div class="icon-preview-area">
+            <div class="icon-preview" id="iconPreview">
+              <span class="icon-placeholder">🖼️</span>
+            </div>
+            <div class="icon-info">
+              <div class="icon-file-name" id="iconFileName">自动从程序中提取图标</div>
+              <button class="btn btn-secondary btn-sm" id="customIconBtn">选择自定义图标</button>
+              <button class="btn btn-link btn-sm" id="resetIconBtn" style="display:none;">恢复默认</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="modalCancel">取消</button>
+        <button class="btn btn-primary" id="modalSave">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Group Modal -->
+  <div class="modal-overlay" id="groupModal" style="display:none;">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2 id="groupModalTitle">新建分组</h2>
+        <button class="modal-close" id="groupModalClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <label>分组名称 <span class="required">*</span></label>
+          <input type="text" id="groupNameInput" placeholder="例如: 开发工具" />
+        </div>
+        <div class="form-row">
+          <label>选择图标</label>
+          <div class="emoji-picker" id="emojiPicker">
+            <!-- Emoji options rendered here -->
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-danger" id="groupDeleteBtn" style="display:none;">删除分组</button>
+        <div class="footer-spacer"></div>
+        <button class="btn btn-secondary" id="groupModalCancel">取消</button>
+        <button class="btn btn-primary" id="groupModalSave">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- System Folder Picker Modal -->
+  <div class="modal-overlay" id="systemFolderModal" style="display:none;">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2>选择系统文件夹</h2>
+        <button class="modal-close" id="systemFolderClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="system-folder-grid" id="systemFolderGrid">
+          <!-- System folder buttons rendered here -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div class="modal-overlay" id="settingsModal" style="display:none;">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>设置</h2>
+        <button class="modal-close" id="settingsClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <!-- Theme Section -->
+        <div class="settings-section">
+          <div class="settings-section-title">外观</div>
+          <div class="settings-row">
+            <div class="settings-label">
+              <span>主题模式</span>
+              <span class="settings-desc">选择浅色或深色主题</span>
+            </div>
+            <div class="theme-selector" id="themeSelector">
+              <button class="theme-option active" data-theme="light">
+                <span class="theme-preview theme-preview-light">☀️</span>
+                <span>浅色</span>
+              </button>
+              <button class="theme-option" data-theme="dark">
+                <span class="theme-preview theme-preview-dark">🌙</span>
+                <span>深色</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Background Section -->
+        <div class="settings-section">
+          <div class="settings-section-title">背景图片</div>
+          <div class="settings-row">
+            <div class="settings-label">
+              <span>自定义背景</span>
+              <span class="settings-desc">上传喜欢的图片作为应用背景</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="bgEnabledToggle">
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+          <div class="settings-row" id="bgUploadRow" style="display:none;">
+            <div class="settings-label">
+              <span>背景图片</span>
+              <span class="settings-desc" id="bgFileName">未选择图片</span>
+            </div>
+            <div class="bg-actions">
+              <button class="btn btn-secondary btn-sm" id="bgUploadBtn">选择图片</button>
+              <button class="btn btn-link btn-sm" id="bgRemoveBtn" style="display:none;">移除</button>
+            </div>
+          </div>
+          <div class="settings-row" id="bgOpacityRow" style="display:none;">
+            <div class="settings-label">
+              <span>背景透明度</span>
+              <span class="settings-desc" id="bgOpacityValue">30%</span>
+            </div>
+            <input type="range" id="bgOpacitySlider" min="0" max="100" value="30" class="slider">
+          </div>
+          <div class="settings-row" id="bgBlurRow" style="display:none;">
+            <div class="settings-label">
+              <span>背景模糊</span>
+              <span class="settings-desc" id="bgBlurValue">0px</span>
+            </div>
+            <input type="range" id="bgBlurSlider" min="0" max="20" value="0" class="slider">
+          </div>
+        </div>
+
+        <!-- View Section -->
+        <div class="settings-section">
+          <div class="settings-section-title">显示</div>
+          <div class="settings-row">
+            <div class="settings-label">
+              <span>默认视图模式</span>
+              <span class="settings-desc">选择启动时的默认展示方式</span>
+            </div>
+            <select id="defaultViewSelect" class="settings-select">
+              <option value="grid">网格视图</option>
+              <option value="list">列表视图</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Behavior Section -->
+        <div class="settings-section">
+          <div class="settings-section-title">行为</div>
+          <div class="settings-row">
+            <div class="settings-label">
+              <span>最小化到托盘</span>
+              <span class="settings-desc">关闭窗口时最小化到系统托盘，而非退出</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="trayToggle">
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+          <div class="settings-row">
+            <div class="settings-label">
+              <span>启动后自动关闭窗口</span>
+              <span class="settings-desc">启动应用后自动隐藏主窗口</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="launchCloseToggle">
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+          <div class="settings-row">
+            <div class="settings-label">
+              <span>开机自启</span>
+              <span class="settings-desc">系统启动时自动运行本程序</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="autoStartToggle">
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Float Ball Section -->
+        <div class="settings-section">
+          <div class="settings-section-title">悬浮球</div>
+          <div class="settings-row">
+            <div class="settings-label">
+              <span>启用悬浮球</span>
+              <span class="settings-desc">在桌面上显示可拖动的悬浮球，快速访问应用</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="floatBallToggle">
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+          <div class="settings-row" id="floatBallClickRow" style="display:none;">
+            <div class="settings-label">
+              <span>单击行为</span>
+              <span class="settings-desc">单击悬浮球时的动作</span>
+            </div>
+            <select id="floatBallSingleClick" class="settings-select">
+              <option value="recent">显示最近应用</option>
+              <option value="showMain">显示主窗口</option>
+            </select>
+          </div>
+          <div class="settings-row" id="floatBallDblClickRow" style="display:none;">
+            <div class="settings-label">
+              <span>双击行为</span>
+              <span class="settings-desc">双击悬浮球时的动作</span>
+            </div>
+            <select id="floatBallDoubleClick" class="settings-select">
+              <option value="showMain">显示主窗口</option>
+              <option value="recent">显示最近应用</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Desktop Shortcut Section -->
+        <div class="settings-section">
+          <div class="settings-section-title">快捷方式</div>
+          <div class="settings-row">
+            <div class="settings-label">
+              <span>桌面快捷方式</span>
+              <span class="settings-desc" id="shortcutStatus">检查桌面快捷方式状态</span>
+            </div>
+            <button class="btn btn-secondary btn-sm" id="createShortcutBtn">创建快捷方式</button>
+          </div>
+        </div>
+
+        <!-- About Section -->
+        <div class="settings-section">
+          <div class="settings-section-title">关于</div>
+          <div class="settings-about">
+            <span>🚀 应用启动器 v1.0</span>
+            <span class="settings-desc">桌面应用程序管理器</span>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="settingsCloseBtn">完成</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Context Menu -->
+  <div class="context-menu" id="contextMenu" style="display:none;">
+    <div class="context-menu-item" id="ctxLaunch">
+      <span class="ctx-icon">▶️</span> 启动
+    </div>
+    <div class="context-menu-item" id="ctxOpenLocation">
+      <span class="ctx-icon">📁</span> 打开文件位置
+    </div>
+    <div class="context-menu-divider"></div>
+    <div class="context-menu-item" id="ctxEdit">
+      <span class="ctx-icon">✏️</span> 编辑
+    </div>
+    <div class="context-menu-item context-menu-submenu" id="ctxMoveTo">
+      <span class="ctx-icon">📂</span> 移动到分组
+      <span class="submenu-arrow">▸</span>
+      <div class="submenu" id="ctxSubmenu"></div>
+    </div>
+    <div class="context-menu-divider"></div>
+    <div class="context-menu-item context-menu-danger" id="ctxDelete">
+      <span class="ctx-icon">🗑️</span> 删除
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div class="toast" id="toast" style="display:none;">
+    <span class="toast-icon" id="toastIcon">✓</span>
+    <span class="toast-msg" id="toastMsg"></span>
+  </div>
+
+  <!-- Confirm Dialog -->
+  <div class="modal-overlay" id="confirmDialog" style="display:none;">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2 id="confirmTitle">确认操作</h2>
+      </div>
+      <div class="modal-body">
+        <p id="confirmMsg" class="confirm-msg"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="confirmCancel">取消</button>
+        <button class="btn btn-danger" id="confirmOk">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Crop Modal -->
+  <div class="modal-overlay" id="cropModal" style="display:none;">
+    <div class="modal modal-crop">
+      <div class="modal-header">
+        <h2>裁剪背景图片</h2>
+        <button class="modal-close" id="cropClose">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="crop-hint">拖动选区选择要使用的图片区域，拖动边角可调整大小</p>
+        <div class="crop-container" id="cropContainer">
+          <img id="cropImage" src="" alt="" />
+          <div class="crop-overlay" id="cropOverlay"></div>
+          <div class="crop-selection" id="cropSelection">
+            <div class="crop-handle crop-handle-nw" data-handle="nw"></div>
+            <div class="crop-handle crop-handle-n" data-handle="n"></div>
+            <div class="crop-handle crop-handle-ne" data-handle="ne"></div>
+            <div class="crop-handle crop-handle-e" data-handle="e"></div>
+            <div class="crop-handle crop-handle-se" data-handle="se"></div>
+            <div class="crop-handle crop-handle-s" data-handle="s"></div>
+            <div class="crop-handle crop-handle-sw" data-handle="sw"></div>
+            <div class="crop-handle crop-handle-w" data-handle="w"></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="cropCancel">取消</button>
+        <button class="btn btn-secondary" id="cropFullBtn">使用完整图片</button>
+        <button class="btn btn-primary" id="cropConfirmBtn">使用选中区域</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

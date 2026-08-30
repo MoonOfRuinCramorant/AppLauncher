@@ -1,0 +1,53 @@
+{
+  "name": "app-launcher",
+  "version": "1.0.0",
+  "description": "桌面应用程序管理器 - 支持应用导入、分组管理和快捷启动",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win"
+  },
+  "author": "WorkBuddy",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "electron-packager": "^15.5.2"
+  },
+  "build": {
+    "appId": "com.workbuddy.applauncher",
+    "productName": "应用启动器",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer.js",
+      "index.html",
+      "styles.css",
+      "floatball.js",
+      "floatball.html",
+      "floatball.css",
+      "tray-icon.png",
+      "package.json"
+    ],
+    "extraResources": [
+      "config.json",
+      "app-icon.ico"
+    ],
+    "win": {
+      "icon": "app-icon.ico",
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "应用启动器",
+      "installerIcon": "app-icon.ico",
+      "uninstallerIcon": "app-icon.ico"
+    }
+  }
+}

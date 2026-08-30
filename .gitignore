@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+build-output/
+
+# Developer's personal app configuration (contains local paths & private apps)
+config.local.json
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+Thumbs.db
+.DS_Store

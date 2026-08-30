@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self';">
+  <link rel="stylesheet" href="floatball.css">
+  <title>FloatBall</title>
+</head>
+<body>
+  <div id="ball" class="float-ball">
+    <span class="ball-icon">🚀</span>
+  </div>
+  <div id="popup" class="float-popup" style="display:none;">
+    <div class="popup-header">最近使用</div>
+    <div id="appList" class="popup-app-list"></div>
+    <div id="popupEmpty" class="popup-empty" style="display:none;">暂无使用记录</div>
+  </div>
+  <script src="floatball.js"></script>
+</body>
+</html>
