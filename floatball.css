@@ -57,6 +57,20 @@ body {
   font-size: 22px;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3));
   z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+/* Custom image icon for the float ball */
+.ball-img {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  pointer-events: none;
 }
 
 /* Dragging state */

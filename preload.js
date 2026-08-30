@@ -33,7 +33,8 @@ contextBridge.exposeInMainWorld('api', {
   setAutoStart: (enabled) => ipcRenderer.invoke('app:setAutoStart', enabled),
 
   // ========== Float Ball ==========
-  fbDrag: (deltaX, deltaY) => ipcRenderer.send('floatball:drag', deltaX, deltaY),
+  fbDragStart: () => ipcRenderer.send('floatball:dragStart'),
+  fbDragEnd: () => ipcRenderer.send('floatball:dragEnd'),
   fbSavePosition: () => ipcRenderer.send('floatball:savePosition'),
   fbExpand: () => ipcRenderer.invoke('floatball:expand'),
   fbCollapse: () => ipcRenderer.invoke('floatball:collapse'),
@@ -44,6 +45,7 @@ contextBridge.exposeInMainWorld('api', {
   fbGetSettings: () => ipcRenderer.invoke('floatball:getSettings'),
   fbOnInit: (callback) => ipcRenderer.on('floatball:init', (_e, data) => callback(data)),
   fbOnSettingsChanged: (callback) => ipcRenderer.on('floatball:settingsChanged', (_e, data) => callback(data)),
+  fbOnCollapseUI: (callback) => ipcRenderer.on('floatball:collapseUI', () => callback()),
 
   // Main window: listen for float ball disabled by user
   onFloatBallDisabled: (callback) => ipcRenderer.on('floatball:disabledByUser', () => callback()),

@@ -113,6 +113,7 @@ const DEFAULT_SETTINGS = {
   floatBallDoubleClick: 'showMain',
   floatBallX: 100,
   floatBallY: 100,
+  floatBallIcon: null, // custom icon for the float ball (data URL)
 };
 
 function loadConfig() {
@@ -249,11 +250,19 @@ function createFloatBallWindow() {
       theme: s.theme,
       singleClick: s.floatBallSingleClick,
       doubleClick: s.floatBallDoubleClick,
+      ballIcon: s.floatBallIcon || null,
     });
   });
 
   floatBallWindow.on('closed', () => {
     floatBallWindow = null;
+  });
+
+  // Fallback: if the window loses focus mid-drag (e.g. mouse released
+  // outside the window after the window failed to follow), stop the drag
+  // so the ball never gets stuck in a broken dragging state.
+  floatBallWindow.on('blur', () => {
+    stopDragFollow();
   });
 
   // Prevent the floatball window from being closed by the user
@@ -266,16 +275,196 @@ function createFloatBallWindow() {
 
 function destroyFloatBallWindow() {
   if (floatBallWindow) {
+    stopDragFollow();
+    stopEdgeWatch();
+    dockState = { side: null, hidden: false, freeX: 0, freeY: 0, lastOutTime: 0 };
     // Save position before destroying
     if (floatBallWindow) {
-      const [x, y] = floatBallWindow.getPosition();
+      // If the ball was docked to an edge, restore the free position instead
+      const sx = dockState.side ? dockState.freeX : floatBallWindow.getPosition()[0];
+      const sy = dockState.side ? dockState.freeY : floatBallWindow.getPosition()[1];
       const config = loadConfig();
-      config.settings.floatBallX = x;
-      config.settings.floatBallY = y;
+      config.settings.floatBallX = sx;
+      config.settings.floatBallY = sy;
       saveConfig(config);
     }
     floatBallWindow.destroy();
     floatBallWindow = null;
+  }
+}
+
+// ========== Float Ball Drag (robust) ==========
+// The renderer's mousemove events stop firing the moment the cursor leaves
+// the tiny 56x56 window, which caused the ball to get lost mid-drag.
+// Fix: the main process polls screen.getCursorScreenPoint() and moves the
+// window to follow the cursor, so the cursor never actually leaves the
+// window while dragging.
+
+let dragTimer = null;
+let dragOffset = { x: 0, y: 0 };
+
+function stopDragFollow() {
+  if (dragTimer) {
+    clearInterval(dragTimer);
+    dragTimer = null;
+  }
+}
+
+function startDragFollow() {
+  if (!floatBallWindow || floatBallWindow.isDestroyed()) return;
+  stopDragFollow();
+  const cursor = screen.getCursorScreenPoint();
+  const [wx, wy] = floatBallWindow.getPosition();
+  dragOffset = { x: cursor.x - wx, y: cursor.y - wy };
+
+  // If the ball was docked to the edge, dragging it out cancels the dock
+  cancelDockKeepPosition();
+
+  dragTimer = setInterval(() => {
+    if (!floatBallWindow || floatBallWindow.isDestroyed()) {
+      stopDragFollow();
+      return;
+    }
+    const cursorNow = screen.getCursorScreenPoint();
+    floatBallWindow.setPosition(cursorNow.x - dragOffset.x, cursorNow.y - dragOffset.y);
+  }, 16);
+}
+
+function saveFloatBallPosition() {
+  try {
+    if (!floatBallWindow || floatBallWindow.isDestroyed()) return;
+    const [x, y] = floatBallWindow.getPosition();
+    const config = loadConfig();
+    config.settings.floatBallX = x;
+    config.settings.floatBallY = y;
+    saveConfig(config);
+  } catch (err) {
+    console.error('Failed to save float ball position:', err);
+  }
+}
+
+// ========== Float Ball Dock (hide to screen edge) ==========
+// Right-click -> "hide to edge": the ball tucks itself at the right/top
+// screen edge leaving a few pixels visible. Moving the cursor to that edge
+// pops the ball back out; moving away re-hides it after a short delay.
+
+const DOCK_PEEK = 6;          // px left visible while hidden at the edge
+const EDGE_ZONE = 12;         // px from the edge that triggers the pop-out
+const DOCK_AUTO_HIDE_DELAY = 800; // ms after cursor leaves the edge to re-hide
+
+let dockState = { side: null, hidden: false, freeX: 0, freeY: 0, lastOutTime: 0 };
+let edgeTimer = null;
+
+function isFloatBallPopupOpen() {
+  if (!floatBallWindow || floatBallWindow.isDestroyed()) return false;
+  const b = floatBallWindow.getBounds();
+  return b.width > BALL_SIZE || b.height > BALL_SIZE;
+}
+
+function getFloatBallDisplay() {
+  const [x, y] = floatBallWindow.getPosition();
+  return screen.getDisplayNearestPoint({ x: x + BALL_SIZE / 2, y: y + BALL_SIZE / 2 });
+}
+
+function dockFloatBall(side) {
+  if (!floatBallWindow || floatBallWindow.isDestroyed()) return;
+  const display = getFloatBallDisplay();
+  const wa = display.workArea;
+  const [x, y] = floatBallWindow.getPosition();
+  dockState = { side, hidden: true, freeX: x, freeY: y, lastOutTime: 0 };
+
+  let nx = x;
+  let ny = y;
+  if (side === 'right') {
+    nx = wa.x + wa.width - BALL_SIZE + DOCK_PEEK;
+    ny = Math.min(Math.max(y, wa.y), wa.y + wa.height - BALL_SIZE);
+  } else { // top
+    nx = Math.min(Math.max(x, wa.x), wa.x + wa.width - BALL_SIZE);
+    ny = wa.y + DOCK_PEEK;
+  }
+  floatBallWindow.setPosition(nx, ny);
+
+  // If the popup was open, collapse it so the window shrinks back to the ball
+  if (isFloatBallPopupOpen()) {
+    floatBallWindow.setBounds({ width: BALL_SIZE, height: BALL_SIZE });
+    sendToFloatBall('floatball:collapseUI');
+  }
+  startEdgeWatch();
+}
+
+function peekFloatBall() {
+  if (!floatBallWindow || floatBallWindow.isDestroyed()) return;
+  const wa = getFloatBallDisplay().workArea;
+  const [x, y] = floatBallWindow.getPosition();
+  let nx = x;
+  let ny = y;
+  if (dockState.side === 'right') {
+    nx = wa.x + wa.width - BALL_SIZE - 8;
+  } else {
+    ny = wa.y + 8;
+  }
+  floatBallWindow.setPosition(nx, ny);
+  dockState.hidden = false;
+  dockState.lastOutTime = 0;
+}
+
+function hideFloatBallToEdge() {
+  if (!floatBallWindow || floatBallWindow.isDestroyed()) return;
+  const wa = getFloatBallDisplay().workArea;
+  const [x, y] = floatBallWindow.getPosition();
+  let nx = x;
+  let ny = y;
+  if (dockState.side === 'right') {
+    nx = wa.x + wa.width - BALL_SIZE + DOCK_PEEK;
+  } else {
+    ny = wa.y + DOCK_PEEK;
+  }
+  floatBallWindow.setPosition(nx, ny);
+  dockState.hidden = true;
+  dockState.lastOutTime = 0;
+}
+
+function cancelDockKeepPosition() {
+  if (dockState.side) {
+    stopEdgeWatch();
+    dockState = { side: null, hidden: false, freeX: 0, freeY: 0, lastOutTime: 0 };
+  }
+}
+
+function undockFloatBall() {
+  stopEdgeWatch();
+  if (!floatBallWindow || floatBallWindow.isDestroyed()) return;
+  floatBallWindow.setPosition(dockState.freeX, dockState.freeY);
+  dockState = { side: null, hidden: false, freeX: 0, freeY: 0, lastOutTime: 0 };
+}
+
+function startEdgeWatch() {
+  stopEdgeWatch();
+  edgeTimer = setInterval(() => {
+    if (!dockState.side || !floatBallWindow || floatBallWindow.isDestroyed()) return;
+    const cursor = screen.getCursorScreenPoint();
+    const wa = screen.getDisplayNearestPoint(cursor).workArea;
+    const inZone =
+      (dockState.side === 'right' && cursor.x >= wa.x + wa.width - EDGE_ZONE) ||
+      (dockState.side === 'top' && cursor.y <= wa.y + EDGE_ZONE);
+
+    if (inZone && dockState.hidden) {
+      peekFloatBall();
+    } else if (!inZone && !dockState.hidden) {
+      if (dockState.lastOutTime === 0) dockState.lastOutTime = Date.now();
+      if (Date.now() - dockState.lastOutTime > DOCK_AUTO_HIDE_DELAY && !isFloatBallPopupOpen()) {
+        hideFloatBallToEdge();
+      }
+    } else {
+      dockState.lastOutTime = 0;
+    }
+  }, 120);
+}
+
+function stopEdgeWatch() {
+  if (edgeTimer) {
+    clearInterval(edgeTimer);
+    edgeTimer = null;
   }
 }
 
@@ -370,7 +559,9 @@ app.on('before-quit', () => {
   // Save float ball position so it restores at the same spot next launch
   if (floatBallWindow && !floatBallWindow.isDestroyed()) {
     try {
-      const [x, y] = floatBallWindow.getPosition();
+      // If the ball was docked to an edge, restore the free position instead
+      const x = dockState.side ? dockState.freeX : floatBallWindow.getPosition()[0];
+      const y = dockState.side ? dockState.freeY : floatBallWindow.getPosition()[1];
       const config = loadConfig();
       config.settings.floatBallX = x;
       config.settings.floatBallY = y;
@@ -415,6 +606,7 @@ ipcMain.handle('config:save', (_event, config) => {
       theme: config.settings.theme,
       singleClick: config.settings.floatBallSingleClick,
       doubleClick: config.settings.floatBallDoubleClick,
+      ballIcon: config.settings.floatBallIcon || null,
     });
   }
   return result;
@@ -675,32 +867,31 @@ ipcMain.handle('tray:quit', () => {
 
 // ========== Float Ball IPC ==========
 
-// Handle drag (fire-and-forget for performance)
-ipcMain.on('floatball:drag', (_event, deltaX, deltaY) => {
-  if (floatBallWindow && !floatBallWindow.isDestroyed()) {
-    const [x, y] = floatBallWindow.getPosition();
-    floatBallWindow.setPosition(x + deltaX, y + deltaY);
-  }
+// Start robust cursor-follow drag (main-process polling)
+ipcMain.on('floatball:dragStart', () => {
+  startDragFollow();
 });
 
-// Save float ball position to config (called after drag ends)
+// End drag: stop following the cursor and persist the position
+ipcMain.on('floatball:dragEnd', () => {
+  stopDragFollow();
+  saveFloatBallPosition();
+});
+
+// Save float ball position to config (fallback; normally done on dragEnd)
 ipcMain.on('floatball:savePosition', () => {
-  if (floatBallWindow && !floatBallWindow.isDestroyed()) {
-    try {
-      const [x, y] = floatBallWindow.getPosition();
-      const config = loadConfig();
-      config.settings.floatBallX = x;
-      config.settings.floatBallY = y;
-      saveConfig(config);
-    } catch (err) {
-      console.error('Failed to save float ball position:', err);
-    }
-  }
+  saveFloatBallPosition();
 });
 
 // Expand the float ball window to show popup
 ipcMain.handle('floatball:expand', () => {
   if (!floatBallWindow || floatBallWindow.isDestroyed()) return;
+
+  // If the ball is docked to an edge, restore the free position first so
+  // the popup is fully visible on screen.
+  if (dockState.side) {
+    undockFloatBall();
+  }
 
   const [x, y] = floatBallWindow.getPosition();
   const display = screen.getDisplayNearestPoint({ x, y });
@@ -801,11 +992,53 @@ ipcMain.handle('floatball:showMain', () => {
 
 // Right-click context menu on float ball
 ipcMain.on('floatball:rightClick', () => {
-  const menu = Menu.buildFromTemplate([
+  const isDocked = !!dockState.side;
+  const template = [
     {
       label: '显示主窗口',
       click: () => {
         showMainWindow();
+      }
+    },
+    { type: 'separator' }
+  ];
+
+  if (isDocked) {
+    template.push({
+      label: '取消隐藏（恢复自由位置）',
+      click: () => {
+        undockFloatBall();
+      }
+    });
+  } else {
+    template.push(
+      {
+        label: '隐藏到屏幕右侧',
+        click: () => {
+          dockFloatBall('right');
+        }
+      },
+      {
+        label: '隐藏到屏幕顶部',
+        click: () => {
+          dockFloatBall('top');
+        }
+      }
+    );
+  }
+
+  template.push(
+    { type: 'separator' },
+    {
+      label: '更换悬浮球图标…',
+      click: () => {
+        chooseFloatBallIcon();
+      }
+    },
+    {
+      label: '恢复默认图标',
+      click: () => {
+        resetFloatBallIcon();
       }
     },
     { type: 'separator' },
@@ -828,14 +1061,63 @@ ipcMain.on('floatball:rightClick', () => {
         }
       }
     }
-  ]);
+  );
+
   // Popup at cursor position with window reference for correct positioning
+  const menu = Menu.buildFromTemplate(template);
   if (floatBallWindow && !floatBallWindow.isDestroyed()) {
     menu.popup(floatBallWindow);
   } else {
     menu.popup();
   }
 });
+
+// Pick a custom image for the float ball icon
+async function chooseFloatBallIcon() {
+  try {
+    // No parent window: works even when the ball is docked/hidden at an edge
+    const result = await dialog.showOpenDialog({
+      title: '选择悬浮球图标',
+      filters: [
+        { name: '图片文件', extensions: ['png', 'jpg', 'jpeg', 'bmp', 'webp', 'gif'] },
+        { name: '所有文件', extensions: ['*'] }
+      ],
+      properties: ['openFile']
+    });
+    if (result.canceled || !result.filePaths[0]) return;
+
+    const buffer = fs.readFileSync(result.filePaths[0]);
+    const ext = path.extname(result.filePaths[0]).toLowerCase();
+    const mimeMap = {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.bmp': 'image/bmp',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp'
+    };
+    const dataUrl = `data:${mimeMap[ext] || 'image/png'};base64,${buffer.toString('base64')}`;
+
+    const config = loadConfig();
+    config.settings.floatBallIcon = dataUrl;
+    saveConfig(config);
+    sendToFloatBall('floatball:settingsChanged', { ballIcon: dataUrl });
+  } catch (err) {
+    console.error('Failed to choose float ball icon:', err);
+  }
+}
+
+// Reset the float ball icon back to the default emoji
+function resetFloatBallIcon() {
+  try {
+    const config = loadConfig();
+    config.settings.floatBallIcon = null;
+    saveConfig(config);
+    sendToFloatBall('floatball:settingsChanged', { ballIcon: null });
+  } catch (err) {
+    console.error('Failed to reset float ball icon:', err);
+  }
+}
 
 // Get current settings for float ball
 ipcMain.handle('floatball:getSettings', () => {
@@ -844,6 +1126,7 @@ ipcMain.handle('floatball:getSettings', () => {
     theme: config.settings.theme,
     singleClick: config.settings.floatBallSingleClick,
     doubleClick: config.settings.floatBallDoubleClick,
+    ballIcon: config.settings.floatBallIcon || null,
   };
 });
 
