@@ -73,6 +73,39 @@ body {
   pointer-events: none;
 }
 
+/* ========== Custom Icon Mode ==========
+   When a custom (cropped, circular) image is used, drop the blue gradient
+   background and the white inset ring so the icon floats on its own. */
+
+body.custom-icon .float-ball {
+  background: transparent;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.3);
+}
+
+body.custom-icon .float-ball::after {
+  display: none;
+}
+
+body.custom-icon .float-ball:hover {
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.4);
+}
+
+body.custom-icon .ball-img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+body.custom-icon.dark-theme .float-ball {
+  background: transparent;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.45);
+}
+
+body.custom-icon.dark-theme .float-ball:hover {
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.55);
+}
+
 /* Dragging state */
 .float-ball.dragging {
   transform: scale(1.05);

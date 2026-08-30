@@ -261,12 +261,16 @@
     if (!iconEl) return;
     iconEl.innerHTML = '';
     if (iconDataUrl) {
+      // Custom icon mode: hide the blue gradient frame, show the cropped
+      // circular image directly (see body.custom-icon styles).
+      document.body.classList.add('custom-icon');
       const img = document.createElement('img');
       img.src = iconDataUrl;
       img.className = 'ball-img';
       img.alt = '';
       iconEl.appendChild(img);
     } else {
+      document.body.classList.remove('custom-icon');
       iconEl.textContent = '🚀';
     }
   }

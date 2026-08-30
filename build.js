@@ -10,6 +10,7 @@ const APP_FILES = [
   'main.js', 'preload.js', 'renderer.js',
   'index.html', 'styles.css',
   'floatball.js', 'floatball.html', 'floatball.css',
+  'crop.js', 'crop.html', 'crop.css',
   'tray-icon.png', 'package.json'
 ];
 const EXTRA_RESOURCES = ['config.json', 'app-icon.ico'];

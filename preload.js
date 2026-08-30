@@ -49,4 +49,9 @@ contextBridge.exposeInMainWorld('api', {
 
   // Main window: listen for float ball disabled by user
   onFloatBallDisabled: (callback) => ipcRenderer.on('floatball:disabledByUser', () => callback()),
+
+  // ========== Icon Crop Window ==========
+  cropOnInit: (callback) => ipcRenderer.on('crop:init', (_e, data) => callback(data)),
+  cropConfirm: (dataUrl) => ipcRenderer.invoke('crop:confirm', dataUrl),
+  cropCancel: () => ipcRenderer.invoke('crop:cancel'),
 });

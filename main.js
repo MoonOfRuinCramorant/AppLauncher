@@ -398,10 +398,11 @@ function saveFloatBallPosition() {
 
 // ========== Float Ball Dock (hide to screen edge) ==========
 // Right-click -> "hide to edge": the ball tucks itself at the right/top
-// screen edge leaving a few pixels visible. Moving the cursor to that edge
-// pops the ball back out; moving away re-hides it after a short delay.
+// screen edge leaving ~1/3 of the icon visible (a grab handle for the
+// mouse). Moving the cursor to that edge pops the ball back out; moving
+// away re-hides it after a short delay.
 
-const DOCK_PEEK = 6;          // px left visible while hidden at the edge
+const DOCK_PEEK = Math.round(BALL_SIZE / 3); // px left visible while hidden at the edge (~1/3 of the icon)
 const EDGE_ZONE = 12;         // px from the edge that triggers the pop-out
 const DOCK_AUTO_HIDE_DELAY = 800; // ms after cursor leaves the edge to re-hide
 
@@ -429,11 +430,15 @@ function dockFloatBall(side) {
   let nx = x;
   let ny = y;
   if (side === 'right') {
-    nx = wa.x + wa.width - BALL_SIZE + DOCK_PEEK;
+    // Window left edge sits at (screen right - 1/3 of the ball) so only the
+    // left third of the icon remains visible inside the work area.
+    nx = wa.x + wa.width - DOCK_PEEK;
     ny = Math.min(Math.max(y, wa.y), wa.y + wa.height - BALL_SIZE);
   } else { // top
+    // Window top edge sits above the screen; only the bottom third of the
+    // icon peeks into the work area.
     nx = Math.min(Math.max(x, wa.x), wa.x + wa.width - BALL_SIZE);
-    ny = wa.y + DOCK_PEEK;
+    ny = wa.y - BALL_SIZE + DOCK_PEEK;
   }
   floatBallWindow.setPosition(nx, ny);
 
@@ -471,9 +476,9 @@ function hideFloatBallToEdge() {
   let nx = x;
   let ny = y;
   if (dockState.side === 'right') {
-    nx = wa.x + wa.width - BALL_SIZE + DOCK_PEEK;
+    nx = wa.x + wa.width - DOCK_PEEK;
   } else {
-    ny = wa.y + DOCK_PEEK;
+    ny = wa.y - BALL_SIZE + DOCK_PEEK;
   }
   floatBallWindow.setPosition(nx, ny);
   dockState.hidden = true;
@@ -1153,8 +1158,9 @@ async function chooseFloatBallIcon() {
     });
     if (result.canceled || !result.filePaths[0]) return;
 
-    const buffer = fs.readFileSync(result.filePaths[0]);
-    const ext = path.extname(result.filePaths[0]).toLowerCase();
+    const filePath = result.filePaths[0];
+    const buffer = fs.readFileSync(filePath);
+    const ext = path.extname(filePath).toLowerCase();
     const mimeMap = {
       '.png': 'image/png',
       '.jpg': 'image/jpeg',
@@ -1165,14 +1171,94 @@ async function chooseFloatBallIcon() {
     };
     const dataUrl = `data:${mimeMap[ext] || 'image/png'};base64,${buffer.toString('base64')}`;
 
+    // Open the crop window so the user can crop the image into a circular
+    // icon before it is applied. Returns null when the user cancels.
+    const cropped = await openIconCropWindow(dataUrl);
+    if (!cropped) return;
+
     const config = loadConfig();
-    config.settings.floatBallIcon = dataUrl;
+    config.settings.floatBallIcon = cropped;
     saveConfig(config);
-    sendToFloatBall('floatball:settingsChanged', { ballIcon: dataUrl });
+    sendToFloatBall('floatball:settingsChanged', { ballIcon: cropped });
   } catch (err) {
     console.error('Failed to choose float ball icon:', err);
   }
 }
+
+// ========== Icon Crop Window ==========
+// A small modal window that lets the user crop the picked image into a
+// circular float-ball icon. The ball itself is alwaysOnTop, so this window
+// is raised to the 'screen-saver' level to sit above it.
+
+let cropWindow = null;
+let cropResolve = null;
+
+function closeCropWindow() {
+  if (cropWindow) {
+    cropWindow.destroy();
+    cropWindow = null;
+  }
+}
+
+function openIconCropWindow(imageDataUrl) {
+  return new Promise((resolve) => {
+    closeCropWindow();
+    cropResolve = resolve;
+
+    cropWindow = new BrowserWindow({
+      width: 540,
+      height: 640,
+      frame: false,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      alwaysOnTop: true,
+      center: true,
+      skipTaskbar: true,
+      show: false,
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: false
+      }
+    });
+
+    // Raise above the always-on-top float ball so the crop UI is never hidden
+    cropWindow.setAlwaysOnTop(true, 'screen-saver');
+
+    cropWindow.loadFile('crop.html');
+    cropWindow.once('ready-to-show', () => {
+      cropWindow.show();
+      cropWindow.webContents.send('crop:init', { imageDataUrl });
+    });
+
+    cropWindow.on('closed', () => {
+      cropWindow = null;
+      if (cropResolve) {
+        const r = cropResolve;
+        cropResolve = null;
+        r(null); // closed without confirming = user cancelled
+      }
+    });
+  });
+}
+
+ipcMain.handle('crop:confirm', (_e, dataUrl) => {
+  const r = cropResolve;
+  cropResolve = null;
+  closeCropWindow();
+  if (r) r(dataUrl || null);
+  return true;
+});
+
+ipcMain.handle('crop:cancel', () => {
+  const r = cropResolve;
+  cropResolve = null;
+  closeCropWindow();
+  if (r) r(null);
+  return true;
+});
 
 // Reset the float ball icon back to the default emoji
 function resetFloatBallIcon() {

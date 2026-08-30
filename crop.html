@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self';">
+  <link rel="stylesheet" href="crop.css">
+  <title>裁剪悬浮球图标</title>
+</head>
+<body>
+  <div class="crop-titlebar">
+    <span class="crop-title">裁剪悬浮球图标</span>
+    <button id="closeBtn" class="crop-close" title="取消">✕</button>
+  </div>
+  <div class="crop-body">
+    <div id="cropContainer" class="crop-container">
+      <img id="cropImage" alt="" draggable="false">
+      <div id="cropBox" class="crop-box">
+        <span class="crop-handle nw"></span>
+        <span class="crop-handle ne"></span>
+        <span class="crop-handle sw"></span>
+        <span class="crop-handle se"></span>
+      </div>
+    </div>
+    <div class="crop-hint">拖动裁剪框移动 · 拖拽四角调整大小 · 滚轮缩放图片</div>
+    <div class="crop-hint crop-hint-sub">图标将以圆形裁剪，透明背景</div>
+  </div>
+  <div class="crop-footer">
+    <button id="cancelBtn" class="crop-btn">取消</button>
+    <button id="confirmBtn" class="crop-btn crop-btn-primary">确定</button>
+  </div>
+  <script src="crop.js"></script>
+</body>
+</html>

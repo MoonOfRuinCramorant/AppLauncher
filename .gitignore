@@ -15,6 +15,7 @@ npm-debug.log*
 
 # Local dev helper scripts
 .launch-app.js
+.test-*
 
 # OS files
 Thumbs.db
