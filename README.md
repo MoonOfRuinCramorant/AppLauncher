@@ -20,7 +20,7 @@
 ### 方式一：直接下载安装包（推荐）
 
 1. 前往本仓库的 [Releases](../../releases) 页面
-2. 下载最新的 `AppLauncher-Setup-v1.0.0.zip`
+2. 下载最新的 `AppLauncher-Setup-vX.Y.Z.zip`（Releases 页面最新版）
 3. 解压后双击运行 `install.bat`，脚本会自动：
    - 安装程序到 `%LOCALAPPDATA%\AppLauncher`
    - 创建桌面快捷方式
