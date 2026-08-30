@@ -21,6 +21,7 @@ const state = {
   floatBallEnabled: false,
   floatBallSingleClick: 'recent',
   floatBallDoubleClick: 'showMain',
+  floatBallPopupStyle: 'vertical',
 }
   },
   currentView: 'all',
@@ -159,8 +160,10 @@ const dom = {
   floatBallToggle: $('floatBallToggle'),
   floatBallClickRow: $('floatBallClickRow'),
   floatBallDblClickRow: $('floatBallDblClickRow'),
+  floatBallPopupStyleRow: $('floatBallPopupStyleRow'),
   floatBallSingleSelect: $('floatBallSingleClick'),
   floatBallDoubleSelect: $('floatBallDoubleClick'),
+  floatBallPopupStyleSelect: $('floatBallPopupStyle'),
   // Context menu
   contextMenu: $('contextMenu'),
   ctxLaunch: $('ctxLaunch'),
@@ -1149,6 +1152,7 @@ function openSettingsModal() {
   updateFloatBallRowsVisibility(s.floatBallEnabled);
   dom.floatBallSingleSelect.value = s.floatBallSingleClick || 'recent';
   dom.floatBallDoubleSelect.value = s.floatBallDoubleClick || 'showMain';
+  dom.floatBallPopupStyleSelect.value = s.floatBallPopupStyle || 'vertical';
 
   // Check shortcut status
   checkShortcutStatus();
@@ -1413,6 +1417,7 @@ async function handleAutoStartToggle(enabled) {
 function updateFloatBallRowsVisibility(visible) {
   dom.floatBallClickRow.style.display = visible ? '' : 'none';
   dom.floatBallDblClickRow.style.display = visible ? '' : 'none';
+  dom.floatBallPopupStyleRow.style.display = visible ? '' : 'none';
 }
 
 async function handleFloatBallToggle(enabled) {
@@ -1433,6 +1438,11 @@ async function handleFloatBallSingleClickChange(value) {
 
 async function handleFloatBallDoubleClickChange(value) {
   state.config.settings.floatBallDoubleClick = value;
+  await saveConfig();
+}
+
+async function handleFloatBallPopupStyleChange(value) {
+  state.config.settings.floatBallPopupStyle = value;
   await saveConfig();
 }
 
@@ -1551,6 +1561,7 @@ function initEventListeners() {
   dom.floatBallToggle.addEventListener('change', (e) => handleFloatBallToggle(e.target.checked));
   dom.floatBallSingleSelect.addEventListener('change', (e) => handleFloatBallSingleClickChange(e.target.value));
   dom.floatBallDoubleSelect.addEventListener('change', (e) => handleFloatBallDoubleClickChange(e.target.value));
+  dom.floatBallPopupStyleSelect.addEventListener('change', (e) => handleFloatBallPopupStyleChange(e.target.value));
 
   // Desktop shortcut
   dom.createShortcutBtn.addEventListener('click', handleCreateShortcut);

@@ -208,17 +208,42 @@
   // ========== Init: receive image from main process ==========
 
   window.api.cropOnInit((data) => {
-    if (!data || !data.imageDataUrl) return;
+    if (!data || !data.imageDataUrl) {
+      showError('未收到图片数据，请重试');
+      return;
+    }
     img = new Image();
     img.onload = () => {
       imgW = img.naturalWidth;
       imgH = img.naturalHeight;
+      // Guard against images without an intrinsic size (e.g. broken/odd
+      // files that still "decode"): fall back to a 512x512 virtual size so
+      // the UI never ends up with an invisible image on a blank canvas.
+      if (!imgW || !imgH) {
+        imgW = 512;
+        imgH = 512;
+      }
+      hideError();
       fitImage();
     };
     img.onerror = () => {
-      window.api.cropCancel();
+      showError('无法加载所选图片，请换一张图片后重试');
     };
     img.src = data.imageDataUrl;
   });
+
+  const errEl = document.createElement('div');
+  errEl.className = 'crop-error';
+  errEl.style.display = 'none';
+  container.parentNode.insertBefore(errEl, container.nextSibling);
+
+  function showError(msg) {
+    errEl.textContent = msg;
+    errEl.style.display = '';
+  }
+
+  function hideError() {
+    errEl.style.display = 'none';
+  }
 
 })();

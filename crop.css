@@ -64,7 +64,14 @@ body {
   width: 480px;
   height: 480px;
   margin: 0 auto;
-  background: #1e1e1e;
+  /* Checkerboard so transparent images (e.g. icon PNGs) stay visible
+     instead of blending into a solid dark background. */
+  background-color: #fff;
+  background-image:
+    linear-gradient(45deg, #e6e6e6 25%, transparent 25%, transparent 75%, #e6e6e6 75%),
+    linear-gradient(45deg, #e6e6e6 25%, transparent 25%, transparent 75%, #e6e6e6 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 10px 10px;
   border-radius: 10px;
   overflow: hidden;
   cursor: crosshair;
@@ -114,6 +121,18 @@ body {
   margin-top: 4px;
   font-size: 11px;
   color: #bbb;
+}
+
+.crop-error {
+  margin: 12px auto 0;
+  padding: 10px 16px;
+  max-width: 480px;
+  background: #fdecea;
+  border: 1px solid #f5c6c0;
+  border-radius: 8px;
+  color: #c62828;
+  font-size: 12px;
+  text-align: center;
 }
 
 /* ========== Footer ========== */

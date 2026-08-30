@@ -111,6 +111,7 @@ const DEFAULT_SETTINGS = {
   floatBallEnabled: false,
   floatBallSingleClick: 'recent',
   floatBallDoubleClick: 'showMain',
+  floatBallPopupStyle: 'vertical', // 'vertical' | 'horizontal' — how the recent-apps panel is presented
   floatBallX: 100,
   floatBallY: 100,
   floatBallIcon: null, // custom icon for the float ball (data URL)
@@ -215,6 +216,17 @@ function updateTrayVisibility(minimizeToTray) {
 const BALL_SIZE = 56;
 const POPUP_WIDTH = 190;
 const POPUP_HEIGHT = 340;
+
+// Horizontal (icon-bar) popup geometry. The bar holds up to 5 recent-app
+// icons side by side; the ball stays attached at one end of the bar.
+const HBAR_ICON = 48;         // icon tile size
+const HBAR_GAP = 6;           // gap between tiles
+const HBAR_PAD = 8;           // inner padding of the bar
+const HBAR_ITEMS = 5;         // max recent apps
+const HBAR_BALL_GAP = 12;     // gap between the ball and the bar
+const HBAR_POPUP_WIDTH = HBAR_ITEMS * HBAR_ICON + (HBAR_ITEMS - 1) * HBAR_GAP + HBAR_PAD * 2;
+const HBAR_WIDTH = HBAR_POPUP_WIDTH + BALL_SIZE + HBAR_BALL_GAP;
+const HBAR_HEIGHT = HBAR_ICON + HBAR_PAD * 2 + 8; // 72: room for the ball too
 
 // Clamp the ball so it stays FULLY inside the visible work area of the
 // display nearest to the given point. This is the safety net that makes
@@ -955,6 +967,40 @@ ipcMain.handle('floatball:expand', () => {
   // ball returns to where the user placed it after using the quick panel.
   preExpandPos = { x, y };
 
+  // ========== Horizontal (icon bar) popup ==========
+  // The bar expands horizontally from the ball: if the ball sits in the
+  // right half of the screen the bar opens to the LEFT of the ball, and
+  // vice versa, so the whole bar always stays on screen.
+  const config = loadConfig();
+  const popupStyle = config.settings.floatBallPopupStyle || 'vertical';
+
+  if (popupStyle === 'horizontal') {
+    const ballCenterX = x + BALL_SIZE / 2;
+    const screenCenterX = workArea.x + workArea.width / 2;
+    // Which side of the bar the ball attaches to. 'left' -> ball on the
+    // left end of the bar (bar extends rightward); 'right' -> bar extends
+    // leftward from the ball.
+    const ballSide = ballCenterX < screenCenterX ? 'left' : 'right';
+
+    let newX = ballSide === 'left' ? x : x - (HBAR_WIDTH - BALL_SIZE);
+    // Vertically center the bar on the ball.
+    let newY = y - (HBAR_HEIGHT - BALL_SIZE) / 2;
+
+    // Clamp fully inside the work area.
+    newX = Math.max(workArea.x, Math.min(newX, workArea.x + workArea.width - HBAR_WIDTH));
+    newY = Math.max(workArea.y, Math.min(newY, workArea.y + workArea.height - HBAR_HEIGHT));
+
+    floatBallWindow.setBounds({
+      x: newX,
+      y: newY,
+      width: HBAR_WIDTH,
+      height: HBAR_HEIGHT
+    });
+    return { style: 'horizontal', direction: ballSide };
+  }
+
+  // ========== Vertical (list) popup ==========
+
   // Fit the popup horizontally inside the work area — a ball sitting near
   // the right edge would otherwise open a popup clipped off-screen.
   let newX = x;
@@ -979,6 +1025,7 @@ ipcMain.handle('floatball:expand', () => {
     width: POPUP_WIDTH,
     height: POPUP_HEIGHT
   });
+  return { style: 'vertical', direction: null };
 });
 
 // Collapse the float ball window back to just the ball
@@ -1159,17 +1206,37 @@ async function chooseFloatBallIcon() {
     if (result.canceled || !result.filePaths[0]) return;
 
     const filePath = result.filePaths[0];
-    const buffer = fs.readFileSync(filePath);
-    const ext = path.extname(filePath).toLowerCase();
-    const mimeMap = {
-      '.png': 'image/png',
-      '.jpg': 'image/jpeg',
-      '.jpeg': 'image/jpeg',
-      '.bmp': 'image/bmp',
-      '.gif': 'image/gif',
-      '.webp': 'image/webp'
-    };
-    const dataUrl = `data:${mimeMap[ext] || 'image/png'};base64,${buffer.toString('base64')}`;
+
+    // Decode through nativeImage so the crop window always receives a PNG
+    // data URL it can render. Passing the raw bytes through (previous
+    // approach) failed for formats Chromium cannot decode from a mismatched
+    // mime type (e.g. .ico, .heic, or a file whose extension lies about its
+    // content) — the crop container ended up black with no image at all.
+    let dataUrl = null;
+    try {
+      const nativeImg = nativeImage.createFromPath(filePath);
+      if (!nativeImg.isEmpty()) {
+        const png = nativeImg.toPNG();
+        if (png && png.length > 0) {
+          dataUrl = `data:image/png;base64,${png.toString('base64')}`;
+        }
+      }
+    } catch (_) { /* fall through to raw data URL below */ }
+
+    if (!dataUrl) {
+      // Fallback: embed the raw file as-is (still works for normal images).
+      const buffer = fs.readFileSync(filePath);
+      const ext = path.extname(filePath).toLowerCase();
+      const mimeMap = {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.bmp': 'image/bmp',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp'
+      };
+      dataUrl = `data:${mimeMap[ext] || 'image/png'};base64,${buffer.toString('base64')}`;
+    }
 
     // Open the crop window so the user can crop the image into a circular
     // icon before it is applied. Returns null when the user cancels.

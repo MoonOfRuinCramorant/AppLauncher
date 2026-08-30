@@ -152,7 +152,16 @@
 
   async function expandPopup() {
     state.isExpanded = true;
-    await window.api.fbExpand();
+    const result = await window.api.fbExpand();
+
+    // Apply the popup presentation style. The main process computes the
+    // window geometry and returns which side the ball sits on for the
+    // horizontal bar ('left' = bar extends rightward, 'right' = leftward).
+    const isHorizontal = !!(result && result.style === 'horizontal');
+    const ballSide = isHorizontal ? (result.direction === 'right' ? 'right' : 'left') : null;
+    document.body.classList.toggle('popup-horizontal', isHorizontal);
+    document.body.classList.toggle('popup-hbar-left', ballSide === 'left');
+    document.body.classList.toggle('popup-hbar-right', ballSide === 'right');
 
     // Load recent apps
     const recentApps = await window.api.fbGetRecentApps();
@@ -164,6 +173,7 @@
   async function collapsePopup() {
     state.isExpanded = false;
     popup.style.display = 'none';
+    document.body.classList.remove('popup-horizontal', 'popup-hbar-left', 'popup-hbar-right');
     await window.api.fbCollapse();
   }
 
@@ -176,6 +186,9 @@
     }
 
     popupEmpty.style.display = 'none';
+
+    // Horizontal bar shows icons only; the app name appears on hover.
+    const horizontal = document.body.classList.contains('popup-horizontal');
 
     apps.forEach(app => {
       const item = document.createElement('div');
@@ -192,7 +205,12 @@
         iconHtml = '<div class="popup-app-item-icon">📦</div>';
       }
 
-      item.innerHTML = `${iconHtml}<div class="popup-app-item-name">${escapeText(app.name)}</div>`;
+      if (horizontal) {
+        item.setAttribute('data-tooltip', escapeText(app.name));
+        item.innerHTML = iconHtml;
+      } else {
+        item.innerHTML = `${iconHtml}<div class="popup-app-item-name">${escapeText(app.name)}</div>`;
+      }
 
       item.addEventListener('click', async () => {
         const result = await window.api.fbLaunchApp(app.id);

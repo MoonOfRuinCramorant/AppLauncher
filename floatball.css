@@ -244,3 +244,118 @@ body.dark-theme .popup-app-item-name {
 body.dark-theme .popup-empty {
   color: #666;
 }
+
+/* ========== Horizontal (Icon Bar) Popup Mode ==========
+   The window becomes a wide bar with the ball attached at one end and
+   up to 5 recent-app icons beside it. Only icons are shown; the app name
+   appears in a tooltip on hover. */
+
+/* The ball anchors to one end of the bar, vertically centered. */
+body.popup-horizontal #ball {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  margin: 0;
+  z-index: 2;
+}
+
+/* Ball on the left end -> the bar extends to the right. */
+body.popup-horizontal.popup-hbar-left #ball {
+  left: 4px;
+}
+
+/* Ball on the right end -> the bar extends to the left. */
+body.popup-horizontal.popup-hbar-right #ball {
+  right: 4px;
+}
+
+/* The bar itself fills the window, keeping clear of the ball. */
+body.popup-horizontal .float-popup {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  padding: 8px;
+  animation: popupAppear 0.18s ease;
+}
+
+body.popup-horizontal.popup-hbar-left .float-popup {
+  padding-left: 62px;
+  justify-content: flex-start;
+}
+
+body.popup-horizontal.popup-hbar-right .float-popup {
+  padding-right: 62px;
+  justify-content: flex-end;
+}
+
+body.popup-horizontal .popup-header {
+  display: none;
+}
+
+body.popup-horizontal .popup-app-list {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+body.popup-horizontal .popup-app-item {
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  position: relative;
+}
+
+body.popup-horizontal .popup-app-item img {
+  width: 36px;
+  height: 36px;
+}
+
+body.popup-horizontal .popup-app-item-icon {
+  font-size: 26px;
+}
+
+body.popup-horizontal .popup-app-item-name {
+  display: none;
+}
+
+/* Tooltip: app name on hover */
+body.popup-horizontal .popup-app-item::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: -30px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(20, 20, 20, 0.92);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 3px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+  z-index: 99;
+}
+
+body.popup-horizontal .popup-app-item:hover::after {
+  opacity: 1;
+}
+
+body.popup-horizontal .popup-empty {
+  padding: 0;
+}
