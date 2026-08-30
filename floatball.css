@@ -10,9 +10,40 @@
 
 body {
   background: transparent;
-  overflow: hidden;
+  overflow: visible; /* allow tooltip to overflow the window */
   user-select: none;
   font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+}
+
+/* ---- Theme variables ----
+   The horizontal popup (icon bar) uses these CSS variables so the user can
+   change the look from the main settings panel. inline style on <body>
+   (set by floatball.js::applyBarSettings) overrides the defaults. */
+:root {
+  --fb-bar-bg: rgba(255, 255, 255, 0.96);
+  --fb-bar-border: rgba(0, 0, 0, 0.06);
+  --fb-bar-text: #333;
+  --fb-bar-accent: #0078d4;
+  --fb-bar-accent-soft: rgba(0, 120, 212, 0.1);
+  --fb-bar-accent-active: rgba(0, 120, 212, 0.2);
+  --fb-bar-tooltip-bg: rgba(20, 20, 20, 0.94);
+  --fb-bar-tooltip-text: #ffffff;
+  --fb-bar-tooltip-border: rgba(255, 255, 255, 0.12);
+  --fb-bar-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  --fb-bar-radius: 14px;
+}
+
+/* Dark-theme defaults — applied when <body class="dark-theme bar-theme-dark"> */
+:root.bar-theme-dark {
+  --fb-bar-bg: rgba(45, 45, 45, 0.96);
+  --fb-bar-border: rgba(255, 255, 255, 0.08);
+  --fb-bar-text: #e0e0e0;
+  --fb-bar-accent-soft: rgba(77, 184, 255, 0.15);
+  --fb-bar-accent-active: rgba(77, 184, 255, 0.25);
+  --fb-bar-tooltip-bg: rgba(245, 245, 245, 0.96);
+  --fb-bar-tooltip-text: #222;
+  --fb-bar-tooltip-border: rgba(0, 0, 0, 0.08);
+  --fb-bar-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
 }
 
 /* ========== Float Ball ========== */
@@ -21,7 +52,7 @@ body {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #0078d4, #005a9e);
+  background: linear-gradient(135deg, var(--fb-bar-accent, #0078d4), color-mix(in srgb, var(--fb-bar-accent, #0078d4) 60%, #000));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -113,20 +144,60 @@ body.custom-icon.dark-theme .float-ball:hover {
   cursor: grabbing;
 }
 
-/* ========== Popup ========== */
+/* ============================================
+   Anti-flicker: click-to-expand UX smoothing
+   ============================================
+   The ball uses transform: scale for hover/active. In horizontal popup mode
+   the ball is switched to position: absolute + translateY(-50%). If both
+   transforms apply at the moment of expand we get one frame where the
+   compositor paints the old hover-scale combined with the new translate —
+   a visible jump. The .no-transition utility disables all transitions for
+   a single frame so the size/position change happens invisibly. */
+
+.float-ball,
+.float-ball::after,
+.float-ball * {
+  /* default; overridden by .no-transition below during expand */
+}
+
+.float-ball.no-transition,
+.float-ball.no-transition::after,
+.float-ball.no-transition * {
+  transition: none !important;
+  animation: none !important;
+}
+
+/* When the horizontal popup is open the ball is no longer hover-draggable,
+   so disable the hover scale (which conflicts with the absolute
+   translateY(-50%) positioning and causes the visible "blink"). */
+body.popup-horizontal .float-ball,
+body.popup-horizontal .float-ball:hover,
+body.popup-horizontal .float-ball:active {
+  transform: none !important;
+}
+
+body.popup-horizontal .float-ball {
+  /* The ball no longer needs its 4px margin — the popup-horizontal mode
+     positions it absolutely at left:4px (or right:4px) and centers it
+     vertically with translateY(-50%). Reset the margin so the box doesn't
+     leak past the window and cause compositing artifacts. */
+  margin: 0;
+}
+
+/* ========== Popup (vertical list mode) ========== */
 
 .float-popup {
   position: absolute;
   top: 56px;
   left: 0;
   width: 178px;
-  background: rgba(255, 255, 255, 0.96);
+  background: var(--fb-bar-bg, rgba(255, 255, 255, 0.96));
   border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--fb-bar-shadow, 0 8px 32px rgba(0, 0, 0, 0.18));
   padding: 6px;
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(0, 0, 0, 0.06);
+  border: 1px solid var(--fb-bar-border, rgba(0, 0, 0, 0.06));
   animation: popupAppear 0.18s ease;
 }
 
@@ -167,11 +238,11 @@ body.custom-icon.dark-theme .float-ball:hover {
 }
 
 .popup-app-item:hover {
-  background: rgba(0, 120, 212, 0.1);
+  background: var(--fb-bar-accent-soft, rgba(0, 120, 212, 0.1));
 }
 
 .popup-app-item:active {
-  background: rgba(0, 120, 212, 0.2);
+  background: var(--fb-bar-accent-active, rgba(0, 120, 212, 0.2));
   transform: scale(0.98);
 }
 
@@ -194,7 +265,7 @@ body.custom-icon.dark-theme .float-ball:hover {
 
 .popup-app-item-name {
   font-size: 13px;
-  color: #333;
+  color: var(--fb-bar-text, #333);
   flex: 1;
   white-space: normal;
   word-break: break-word;
@@ -208,55 +279,18 @@ body.custom-icon.dark-theme .float-ball:hover {
   font-size: 13px;
 }
 
-/* ========== Dark Theme ========== */
-
-body.dark-theme .float-ball {
-  background: linear-gradient(135deg, #2d2d2d, #1a1a1a);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1) inset;
-}
-
-body.dark-theme .float-ball:hover {
-  box-shadow: 0 6px 20px rgba(77, 184, 255, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.15) inset;
-}
-
-body.dark-theme .float-popup {
-  background: rgba(45, 45, 45, 0.96);
-  border-color: rgba(255, 255, 255, 0.08);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-}
-
-body.dark-theme .popup-header {
-  color: #777;
-}
-
-body.dark-theme .popup-app-item:hover {
-  background: rgba(77, 184, 255, 0.15);
-}
-
-body.dark-theme .popup-app-item:active {
-  background: rgba(77, 184, 255, 0.25);
-}
-
-body.dark-theme .popup-app-item-name {
-  color: #e0e0e0;
-}
-
-body.dark-theme .popup-empty {
-  color: #666;
-}
-
 /* ========== Horizontal (Icon Bar) Popup Mode ==========
    The window becomes a wide bar with the ball attached at one end and
-   up to 5 recent-app icons beside it. Only icons are shown; the app name
-   appears in a tooltip on hover. */
+   up to 5 recent-app icons beside it. The app name appears in a tooltip
+   below the hovered icon (rendered as a real <div id="appTooltip"> for
+   stacking-context reasons — see comment in floatball.html). */
 
-/* The ball anchors to one end of the bar, vertically centered. */
+/* Ball anchors to one end of the bar, vertically centered. */
 body.popup-horizontal #ball {
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
   margin: 0;
-  z-index: 2;
 }
 
 /* Ball on the left end -> the bar extends to the right. */
@@ -279,7 +313,7 @@ body.popup-horizontal .float-popup {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 14px;
+  border-radius: var(--fb-bar-radius, 14px);
   padding: 8px;
   animation: popupAppear 0.18s ease;
 }
@@ -329,33 +363,55 @@ body.popup-horizontal .popup-app-item-name {
   display: none;
 }
 
-/* Tooltip: app name on hover */
-body.popup-horizontal .popup-app-item::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  top: -30px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(20, 20, 20, 0.92);
-  color: #fff;
+/* Real-DOM tooltip rendered below (or above) the hovered item. */
+.app-tooltip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  background: var(--fb-bar-tooltip-bg, rgba(20, 20, 20, 0.94));
+  color: var(--fb-bar-tooltip-text, #fff);
+  border: 1px solid var(--fb-bar-tooltip-border, rgba(255, 255, 255, 0.12));
   font-size: 12px;
-  line-height: 1.4;
-  padding: 3px 8px;
+  line-height: 1.3;
+  padding: 4px 10px;
   border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
   white-space: nowrap;
-  max-width: 170px;
+  max-width: 240px;
   overflow: hidden;
   text-overflow: ellipsis;
-  opacity: 0;
   pointer-events: none;
-  transition: opacity 0.12s ease;
-  z-index: 99;
+  z-index: 9999;
+  opacity: 0;
+  transform: translate(-50%, 0) translateY(-2px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
 }
 
-body.popup-horizontal .popup-app-item:hover::after {
+.app-tooltip.visible {
   opacity: 1;
+  transform: translate(-50%, 0) translateY(0);
+}
+
+/* In vertical popup mode the tooltip is hidden entirely. */
+body:not(.popup-horizontal) .app-tooltip {
+  display: none;
 }
 
 body.popup-horizontal .popup-empty {
   padding: 0;
+}
+
+/* ========== Dark Theme ========== */
+
+body.dark-theme .float-ball {
+  background: linear-gradient(135deg, #2d2d2d, #1a1a1a);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1) inset;
+}
+
+body.dark-theme .float-ball:hover {
+  box-shadow: 0 6px 20px rgba(77, 184, 255, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.15) inset;
+}
+
+body.dark-theme .popup-header {
+  color: #777;
 }

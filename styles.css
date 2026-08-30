@@ -1182,6 +1182,37 @@ body {
   gap: 16px;
 }
 
+/* Sub-row: tucked under a parent setting (e.g. horizontal-bar theming
+   lives under the "popup style" pick). A subtle left bar visually groups
+   it with the parent. */
+.settings-row-sub {
+  padding-left: 16px;
+  margin-left: 4px;
+  border-left: 2px solid var(--accent);
+  background: linear-gradient(to right, var(--accent-soft, rgba(0, 120, 212, 0.06)), transparent 80%);
+  border-radius: 4px;
+}
+
+.color-input-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.color-input {
+  width: 44px;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  cursor: pointer;
+}
+
+.color-reset {
+  height: 28px;
+}
+
 .settings-label {
   display: flex;
   flex-direction: column;

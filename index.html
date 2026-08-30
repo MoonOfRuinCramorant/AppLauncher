@@ -384,6 +384,52 @@
               <option value="horizontal">水平选择框</option>
             </select>
           </div>
+
+          <!-- Horizontal bar appearance — visible only when "水平选择框" is selected -->
+          <div class="settings-row settings-row-sub" id="floatBallBarThemeRow" style="display:none;">
+            <div class="settings-label">
+              <span>水平框主题</span>
+              <span class="settings-desc">跟随主题 / 始终浅色 / 始终深色</span>
+            </div>
+            <select id="floatBallBarTheme" class="settings-select">
+              <option value="auto">跟随主程序主题</option>
+              <option value="light">始终浅色</option>
+              <option value="dark">始终深色</option>
+            </select>
+          </div>
+
+          <div class="settings-row settings-row-sub" id="floatBallBarAccentRow" style="display:none;">
+            <div class="settings-label">
+              <span>强调色</span>
+              <span class="settings-desc">用于悬浮球渐变与 tooltip 高亮</span>
+            </div>
+            <div class="color-input-group">
+              <input type="color" id="floatBallBarAccent" class="color-input" value="#0078d4" />
+              <button class="btn btn-link btn-sm color-reset" data-target="floatBallBarAccent">恢复默认</button>
+            </div>
+          </div>
+
+          <div class="settings-row settings-row-sub" id="floatBallBarBgRow" style="display:none;">
+            <div class="settings-label">
+              <span>水平框背景色</span>
+              <span class="settings-desc">留空将按主题自动选择</span>
+            </div>
+            <div class="color-input-group">
+              <input type="color" id="floatBallBarBg" class="color-input" value="#ffffff" />
+              <button class="btn btn-link btn-sm color-reset" data-target="floatBallBarBg">使用主题</button>
+            </div>
+          </div>
+
+          <div class="settings-row settings-row-sub" id="floatBallBarBorderRow" style="display:none;">
+            <div class="settings-label">
+              <span>水平框边框色</span>
+              <span class="settings-desc">留空将按主题自动选择</span>
+            </div>
+            <div class="color-input-group">
+              <input type="color" id="floatBallBarBorder" class="color-input" value="#cccccc" />
+              <button class="btn btn-link btn-sm color-reset" data-target="floatBallBarBorder">使用主题</button>
+            </div>
+          </div>
         </div>
 
         <!-- Desktop Shortcut Section -->

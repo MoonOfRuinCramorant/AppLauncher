@@ -22,6 +22,10 @@ const state = {
   floatBallSingleClick: 'recent',
   floatBallDoubleClick: 'showMain',
   floatBallPopupStyle: 'vertical',
+  floatBallBarTheme: 'auto',
+  floatBallBarAccent: '#0078d4',
+  floatBallBarBg: null,
+  floatBallBarBorder: null,
 }
   },
   currentView: 'all',
@@ -164,6 +168,14 @@ const dom = {
   floatBallSingleSelect: $('floatBallSingleClick'),
   floatBallDoubleSelect: $('floatBallDoubleClick'),
   floatBallPopupStyleSelect: $('floatBallPopupStyle'),
+  floatBallBarThemeRow: $('floatBallBarThemeRow'),
+  floatBallBarAccentRow: $('floatBallBarAccentRow'),
+  floatBallBarBgRow: $('floatBallBarBgRow'),
+  floatBallBarBorderRow: $('floatBallBarBorderRow'),
+  floatBallBarThemeSelect: $('floatBallBarTheme'),
+  floatBallBarAccentInput: $('floatBallBarAccent'),
+  floatBallBarBgInput: $('floatBallBarBg'),
+  floatBallBarBorderInput: $('floatBallBarBorder'),
   // Context menu
   contextMenu: $('contextMenu'),
   ctxLaunch: $('ctxLaunch'),
@@ -1153,6 +1165,12 @@ function openSettingsModal() {
   dom.floatBallSingleSelect.value = s.floatBallSingleClick || 'recent';
   dom.floatBallDoubleSelect.value = s.floatBallDoubleClick || 'showMain';
   dom.floatBallPopupStyleSelect.value = s.floatBallPopupStyle || 'vertical';
+  updateFloatBallBarRowsVisibility(s.floatBallEnabled && (s.floatBallPopupStyle === 'horizontal'));
+  // Bar theming values
+  dom.floatBallBarThemeSelect.value = s.floatBallBarTheme || 'auto';
+  dom.floatBallBarAccentInput.value = s.floatBallBarAccent || '#0078d4';
+  dom.floatBallBarBgInput.value = s.floatBallBarBg || '#ffffff';
+  dom.floatBallBarBorderInput.value = s.floatBallBarBorder || '#cccccc';
 
   // Check shortcut status
   checkShortcutStatus();
@@ -1418,6 +1436,15 @@ function updateFloatBallRowsVisibility(visible) {
   dom.floatBallClickRow.style.display = visible ? '' : 'none';
   dom.floatBallDblClickRow.style.display = visible ? '' : 'none';
   dom.floatBallPopupStyleRow.style.display = visible ? '' : 'none';
+  // The bar-* sub-rows live under the popup-style row and only make sense
+  // when the popup is the horizontal bar.
+  updateFloatBallBarRowsVisibility(visible && (state.config.settings.floatBallPopupStyle === 'horizontal'));
+}
+
+function updateFloatBallBarRowsVisibility(visible) {
+  [dom.floatBallBarThemeRow, dom.floatBallBarAccentRow, dom.floatBallBarBgRow, dom.floatBallBarBorderRow].forEach(el => {
+    if (el) el.style.display = visible ? '' : 'none';
+  });
 }
 
 async function handleFloatBallToggle(enabled) {
@@ -1443,7 +1470,45 @@ async function handleFloatBallDoubleClickChange(value) {
 
 async function handleFloatBallPopupStyleChange(value) {
   state.config.settings.floatBallPopupStyle = value;
+  // Show / hide the bar theming sub-rows together with the change.
+  updateFloatBallBarRowsVisibility(state.config.settings.floatBallEnabled && value === 'horizontal');
   await saveConfig();
+}
+
+async function handleFloatBallBarThemeChange(value) {
+  state.config.settings.floatBallBarTheme = value;
+  await saveConfig();
+}
+
+async function handleFloatBallBarAccentChange(value) {
+  state.config.settings.floatBallBarAccent = value;
+  await saveConfig();
+}
+
+async function handleFloatBallBarBgChange(value) {
+  state.config.settings.floatBallBarBg = value || null;
+  await saveConfig();
+}
+
+async function handleFloatBallBarBorderChange(value) {
+  state.config.settings.floatBallBarBorder = value || null;
+  await saveConfig();
+}
+
+function resetFloatBallBarField(target) {
+  if (target === 'floatBallBarAccent') {
+    dom.floatBallBarAccentInput.value = '#0078d4';
+    handleFloatBallBarAccentChange('#0078d4');
+  } else if (target === 'floatBallBarBg') {
+    // "use theme" => blank out the saved value (null = follow theme)
+    dom.floatBallBarBgInput.value = '#ffffff';
+    state.config.settings.floatBallBarBg = null;
+    saveConfig();
+  } else if (target === 'floatBallBarBorder') {
+    dom.floatBallBarBorderInput.value = '#cccccc';
+    state.config.settings.floatBallBarBorder = null;
+    saveConfig();
+  }
 }
 
 async function handleCreateShortcut() {
@@ -1562,6 +1627,17 @@ function initEventListeners() {
   dom.floatBallSingleSelect.addEventListener('change', (e) => handleFloatBallSingleClickChange(e.target.value));
   dom.floatBallDoubleSelect.addEventListener('change', (e) => handleFloatBallDoubleClickChange(e.target.value));
   dom.floatBallPopupStyleSelect.addEventListener('change', (e) => handleFloatBallPopupStyleChange(e.target.value));
+  dom.floatBallBarThemeSelect.addEventListener('change', (e) => handleFloatBallBarThemeChange(e.target.value));
+  dom.floatBallBarAccentInput.addEventListener('input', (e) => handleFloatBallBarAccentChange(e.target.value));
+  dom.floatBallBarAccentInput.addEventListener('change', (e) => handleFloatBallBarAccentChange(e.target.value));
+  dom.floatBallBarBgInput.addEventListener('input', (e) => handleFloatBallBarBgChange(e.target.value));
+  dom.floatBallBarBgInput.addEventListener('change', (e) => handleFloatBallBarBgChange(e.target.value));
+  dom.floatBallBarBorderInput.addEventListener('input', (e) => handleFloatBallBarBorderChange(e.target.value));
+  dom.floatBallBarBorderInput.addEventListener('change', (e) => handleFloatBallBarBorderChange(e.target.value));
+  // "使用主题/恢复默认" buttons — delegated by data-target
+  document.querySelectorAll('.color-reset').forEach(btn => {
+    btn.addEventListener('click', () => resetFloatBallBarField(btn.dataset.target));
+  });
 
   // Desktop shortcut
   dom.createShortcutBtn.addEventListener('click', handleCreateShortcut);

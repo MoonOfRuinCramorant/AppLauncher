@@ -17,6 +17,12 @@
     singleClickAction: 'recent',
     doubleClickAction: 'showMain',
     theme: 'light',
+    // Horizontal bar theming — kept on state so settings can be applied live
+    // without restarting the float-ball window.
+    barTheme: 'auto',
+    barAccent: '#0078d4',
+    barBg: null,
+    barBorder: null,
   };
 
   // ========== DOM ==========
@@ -24,6 +30,7 @@
   const popup = document.getElementById('popup');
   const appList = document.getElementById('appList');
   const popupEmpty = document.getElementById('popupEmpty');
+  const tooltipEl = document.getElementById('appTooltip');
 
   // ========== Drag Logic ==========
   // The actual window movement is driven by the main process polling the
@@ -70,8 +77,17 @@
     window.api.fbDragEnd();
 
     if (!state.hasMoved && Date.now() - state.mouseDownTime < 400) {
-      // It's a click, not a drag
+      // It's a click, not a drag. Suppress the ball's transition/hover-scale
+      // for one frame so the click -> expand -> window resize happens in a
+      // single paint — otherwise the lingering hover transform combines
+      // with the absolute positioning of popup-horizontal mode and creates a
+      // visible "blink" of the ball at the moment of expand.
+      ball.classList.add('no-transition');
       handleClick();
+      // After two frames (so the resize has been laid out) re-enable transitions.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        ball.classList.remove('no-transition');
+      }));
     }
   });
 
@@ -174,6 +190,7 @@
     state.isExpanded = false;
     popup.style.display = 'none';
     document.body.classList.remove('popup-horizontal', 'popup-hbar-left', 'popup-hbar-right');
+    hideTooltip();
     await window.api.fbCollapse();
   }
 
@@ -239,6 +256,54 @@
     }
   });
 
+  // ========== Tooltip (app-name on hover in horizontal bar) ==========
+  // Rendered as a real <div id="appTooltip"> with position:fixed so it can
+  // sit above the float-ball's own stacking context. The previous ::after
+  // approach was visually buried under the ball because #ball creates a
+  // stacking context (z-index:2) that's higher than the auto-context the
+  // popup lives in.
+  function positionTooltip(text, anchorRect) {
+    tooltipEl.textContent = text || '';
+    // Default: tooltip appears centered below the icon.
+    let cx = anchorRect.left + anchorRect.width / 2;
+    let by = anchorRect.bottom + 8;
+    // Flip above the icon if we would clip the window bottom edge.
+    if (by + 22 > window.innerHeight) {
+      by = anchorRect.top - 8;
+      tooltipEl.classList.add('flip-up');
+    } else {
+      tooltipEl.classList.remove('flip-up');
+    }
+    // Clamp horizontally so the tooltip never extends past the window.
+    cx = Math.max(60, Math.min(cx, window.innerWidth - 60));
+    if (by < 0) by = 8;
+    tooltipEl.style.left = cx + 'px';
+    tooltipEl.style.top = by + 'px';
+  }
+
+  // Hover delegation: any list item with data-tooltip shows the tooltip.
+  appList.addEventListener('mouseover', (e) => {
+    if (!document.body.classList.contains('popup-horizontal')) return;
+    const item = e.target.closest('.popup-app-item');
+    if (!item) return;
+    positionTooltip(item.dataset.tooltip || '', item.getBoundingClientRect());
+    tooltipEl.classList.add('visible');
+  });
+  appList.addEventListener('mouseout', (e) => {
+    if (!document.body.classList.contains('popup-horizontal')) return;
+    // Hide only when the cursor leaves to a non-descendant element.
+    const related = e.relatedTarget;
+    if (related && appList.contains(related)) return;
+    const fromItem = e.target.closest('.popup-app-item');
+    if (!fromItem) return;
+    tooltipEl.classList.remove('visible');
+  });
+
+  // Collapse: hide tooltip immediately so it doesn't linger after the bar closes.
+  function hideTooltip() {
+    tooltipEl.classList.remove('visible');
+  }
+
   // ========== Init ==========
 
   // Listen for init data from main process
@@ -247,6 +312,13 @@
     state.singleClickAction = data.singleClick || 'recent';
     state.doubleClickAction = data.doubleClick || 'showMain';
     applyTheme(state.theme);
+    applyBarSettings({
+      barTheme: data.barTheme,
+      barAccent: data.barAccent,
+      barBg: data.barBg,
+      barBorder: data.barBorder,
+      theme: state.theme,
+    });
     applyBallIcon(data.ballIcon || null);
   });
 
@@ -264,6 +336,21 @@
     }
     if (data.hasOwnProperty('ballIcon')) {
       applyBallIcon(data.ballIcon || null);
+    }
+    // Bar theming: re-apply when any of the bar* fields come through.
+    if (data.hasOwnProperty('barTheme') || data.hasOwnProperty('barAccent') ||
+        data.hasOwnProperty('barBg') || data.hasOwnProperty('barBorder')) {
+      state.barTheme = data.barTheme || 'auto';
+      state.barAccent = data.barAccent || '#0078d4';
+      state.barBg = data.barBg || null;
+      state.barBorder = data.barBorder || null;
+      applyBarSettings({
+        barTheme: state.barTheme,
+        barAccent: state.barAccent,
+        barBg: state.barBg,
+        barBorder: state.barBorder,
+        theme: state.theme,
+      });
     }
   });
 
@@ -299,6 +386,69 @@
     } else {
       document.body.classList.remove('dark-theme');
     }
+    // bar-theme may depend on global theme — re-apply so the derived
+    // CSS variables refresh together with the global theme switch.
+    applyBarSettings({
+      barTheme: state.barTheme,
+      barAccent: state.barAccent,
+      barBg: state.barBg,
+      barBorder: state.barBorder,
+      theme: state.theme,
+    });
+  }
+
+  // Resolve which palette the horizontal bar should use, then write the
+  // values into the CSS variables on <html>/<body>. The two palettes live
+  // in :root and :root.bar-theme-dark (see floatball.css). When 'auto' we
+  // follow the global theme; when 'light'/'dark' the bar locks to that
+  // look regardless of the rest of the app.
+  function applyBarSettings(s) {
+    const baseTheme = (s.barTheme === 'light' || s.barTheme === 'dark') ? s.barTheme : s.theme;
+    document.documentElement.classList.toggle('bar-theme-dark', baseTheme === 'dark');
+
+    const accent = (s.barAccent && /^#[0-9a-fA-F]{6}$/.test(s.barAccent)) ? s.barAccent : '#0078d4';
+    const accentSoft = hexToRgba(accent, baseTheme === 'dark' ? 0.18 : 0.12);
+    const accentActive = hexToRgba(accent, baseTheme === 'dark' ? 0.30 : 0.22);
+
+    document.documentElement.style.setProperty('--fb-bar-accent', accent);
+    document.documentElement.style.setProperty('--fb-bar-accent-soft', accentSoft);
+    document.documentElement.style.setProperty('--fb-bar-accent-active', accentActive);
+
+    if (s.barBg && /^#[0-9a-fA-F]{6}$/.test(s.barBg)) {
+      document.documentElement.style.setProperty('--fb-bar-bg', s.barBg + (s.barBg.length === 7 ? 'f5' : ''));
+    } else {
+      document.documentElement.style.removeProperty('--fb-bar-bg');
+    }
+    if (s.barBorder && /^#[0-9a-fA-F]{6}$/.test(s.barBorder)) {
+      document.documentElement.style.setProperty('--fb-bar-border', s.barBorder + '30');
+    } else {
+      document.documentElement.style.removeProperty('--fb-bar-border');
+    }
+
+    // Tooltip background uses the accent color in a soft, slightly opaque form
+    // for clear visual identification; falls back to the dark theme pair.
+    if (baseTheme === 'dark') {
+      document.documentElement.style.setProperty('--fb-bar-tooltip-bg', hexToRgba('#222222', 0.95));
+      document.documentElement.style.setProperty('--fb-bar-tooltip-text', '#f5f5f5');
+      document.documentElement.style.setProperty('--fb-bar-tooltip-border', 'rgba(255,255,255,0.12)');
+    } else {
+      document.documentElement.style.setProperty('--fb-bar-tooltip-bg', hexToRgba(accent, 0.95));
+      document.documentElement.style.setProperty('--fb-bar-tooltip-text', '#ffffff');
+      document.documentElement.style.setProperty('--fb-bar-tooltip-border', hexToRgba(accent, 0.4));
+    }
+  }
+
+  // Convert "#RRGGBB" to "rgba(r,g,b,a)" — needed because barBg/barBorder
+  // from the color picker is always opaque and we want to blend it into the
+  // glassy bar background.
+  function hexToRgba(hex, a) {
+    const m = /^#?([0-9a-fA-F]{6})$/.exec(hex);
+    if (!m) return `rgba(0,0,0,${a})`;
+    const v = m[1];
+    const r = parseInt(v.slice(0, 2), 16);
+    const g = parseInt(v.slice(2, 4), 16);
+    const b = parseInt(v.slice(4, 6), 16);
+    return `rgba(${r},${g},${b},${a})`;
   }
 
   // Prevent the ball from being dragged by HTML drag-and-drop

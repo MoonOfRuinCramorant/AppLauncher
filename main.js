@@ -134,6 +134,15 @@ const DEFAULT_SETTINGS = {
   floatBallX: 100,
   floatBallY: 100,
   floatBallIcon: null, // custom icon for the float ball (data URL)
+  // ---- Horizontal (icon-bar) popup theming ----
+  // 'auto' = follow the global theme; 'light' / 'dark' = force the chosen look
+  floatBallBarTheme: 'auto',
+  // Accent color used by the ball gradient in horizontal mode and by the
+  // tooltip border/bg accent. Empty string falls back to a default.
+  floatBallBarAccent: '#0078d4',
+  // Optional overrides for the bar background / border. null = follow theme.
+  floatBallBarBg: null,
+  floatBallBarBorder: null,
 };
 
 function loadConfig() {
@@ -299,6 +308,10 @@ function createFloatBallWindow() {
       singleClick: s.floatBallSingleClick,
       doubleClick: s.floatBallDoubleClick,
       ballIcon: s.floatBallIcon || null,
+      barTheme: s.floatBallBarTheme,
+      barAccent: s.floatBallBarAccent,
+      barBg: s.floatBallBarBg,
+      barBorder: s.floatBallBarBorder,
     });
   });
 
@@ -722,6 +735,10 @@ ipcMain.handle('config:save', (_event, config) => {
       singleClick: config.settings.floatBallSingleClick,
       doubleClick: config.settings.floatBallDoubleClick,
       ballIcon: config.settings.floatBallIcon || null,
+      barTheme: config.settings.floatBallBarTheme,
+      barAccent: config.settings.floatBallBarAccent,
+      barBg: config.settings.floatBallBarBg,
+      barBorder: config.settings.floatBallBarBorder,
     });
   }
   return result;
@@ -1416,6 +1433,10 @@ ipcMain.handle('floatball:getSettings', () => {
     singleClick: config.settings.floatBallSingleClick,
     doubleClick: config.settings.floatBallDoubleClick,
     ballIcon: config.settings.floatBallIcon || null,
+    barTheme: config.settings.floatBallBarTheme,
+    barAccent: config.settings.floatBallBarAccent,
+    barBg: config.settings.floatBallBarBg,
+    barBorder: config.settings.floatBallBarBorder,
   };
 });
 

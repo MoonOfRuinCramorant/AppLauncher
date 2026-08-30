@@ -15,6 +15,10 @@
     <div id="appList" class="popup-app-list"></div>
     <div id="popupEmpty" class="popup-empty" style="display:none;">暂无使用记录</div>
   </div>
+  <!-- App-name tooltip. Rendered as a real DOM element with position:fixed
+       so it escapes the popup's stacking context — the ball (z-index:2)
+       would otherwise occlude a CSS ::after inside #popup. -->
+  <div id="appTooltip" class="app-tooltip"></div>
   <script src="floatball.js"></script>
 </body>
 </html>
