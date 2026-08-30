@@ -25,6 +25,25 @@ let tray = null;
 let floatBallWindow = null;
 let isQuitting = false;
 
+// ========== Float Ball Diagnostics Log ==========
+// Writes key float-ball lifecycle events to a log file so that "the ball
+// vanished" bugs can be diagnosed from a reproduction. Dev: next to main.js;
+// packaged: inside userData. Keep it tiny — rotate at 256 KB.
+function fbLog(...args) {
+  try {
+    const line = `[${new Date().toISOString()}] ${args.join(' ')}\n`;
+    const file = app.isPackaged
+      ? path.join(app.getPath('userData'), 'floatball.log')
+      : path.join(__dirname, '.fb-log.txt');
+    fs.appendFileSync(file, line);
+    // Rotate: if the log grows past 256 KB, start a fresh file.
+    try {
+      const st = fs.statSync(file);
+      if (st.size > 256 * 1024) fs.truncateSync(file, 0);
+    } catch (_) {}
+  } catch (_) {}
+}
+
 // Helper: show main window and restore taskbar presence
 function showMainWindow() {
   if (!mainWindow) return;
@@ -284,6 +303,7 @@ function createFloatBallWindow() {
   });
 
   floatBallWindow.on('closed', () => {
+    fbLog('[floatball] closed');
     floatBallWindow = null;
   });
 
@@ -291,7 +311,36 @@ function createFloatBallWindow() {
   // outside the window after the window failed to follow), stop the drag
   // so the ball never gets stuck in a broken dragging state.
   floatBallWindow.on('blur', () => {
+    fbLog('[floatball] blur -> stopDragFollow + reassert topmost');
     stopDragFollow();
+    // On Windows a transparent always-on-top window can silently drop out
+    // of the topmost layer when focus moves to another app. Re-assert it
+    // on every blur so the ball can never get buried under the foreground
+    // window (the "ball vanished over a webpage" bug).
+    try {
+      floatBallWindow.setAlwaysOnTop(true);
+    } catch (_) {}
+  });
+
+  // If the renderer dies (GPU/transparent-window glitches on Windows), the
+  // transparent window can become fully invisible — i.e. the ball "vanishes"
+  // while the process still lives. Rebuild the window so it always recovers.
+  floatBallWindow.webContents.on('render-process-gone', (_e, details) => {
+    fbLog('[floatball] render-process-gone reason=' + (details && details.reason));
+    const pos = floatBallWindow.getPosition();
+    const wasDocked = !!dockState.side;
+    const dock = dockState;
+    try { floatBallWindow.destroy(); } catch (_) {}
+    floatBallWindow = null;
+    // Re-create at the same spot (or at the docked edge if it was docked).
+    const config = loadConfig();
+    if (config.settings.floatBallEnabled) {
+      createFloatBallWindow();
+      if (floatBallWindow && !floatBallWindow.isDestroyed()) {
+        floatBallWindow.setPosition(pos[0], pos[1]);
+        if (wasDocked && dock.side) dockFloatBall(dock.side);
+      }
+    }
   });
 
   // Prevent the floatball window from being closed by the user
@@ -935,11 +984,13 @@ ipcMain.handle('tray:quit', () => {
 
 // Start robust cursor-follow drag (main-process polling)
 ipcMain.on('floatball:dragStart', () => {
+  fbLog('[floatball] dragStart');
   startDragFollow();
 });
 
 // End drag: stop following the cursor and persist the position
 ipcMain.on('floatball:dragEnd', () => {
+  fbLog('[floatball] dragEnd');
   stopDragFollow();
   saveFloatBallPosition();
 });
@@ -953,9 +1004,24 @@ ipcMain.on('floatball:savePosition', () => {
 ipcMain.handle('floatball:expand', () => {
   if (!floatBallWindow || floatBallWindow.isDestroyed()) return;
 
+  // Guard against the ball "vanishing" when another app (browser, etc.) is
+  // in the foreground: on Windows a transparent always-on-top window can
+  // drop out of the topmost layer after it takes focus. Re-assert topmost
+  // and make sure the window is actually visible before sizing the popup.
+  try {
+    floatBallWindow.setAlwaysOnTop(true);
+    if (!floatBallWindow.isVisible()) {
+      fbLog('[floatball] expand: window not visible -> show()');
+      floatBallWindow.show();
+    }
+  } catch (err) {
+    fbLog('[floatball] expand: setAlwaysOnTop/show error', err.message);
+  }
+
   // If the ball is docked to an edge, restore the free position first so
   // the popup is fully visible on screen.
   if (dockState.side) {
+    fbLog('[floatball] expand: undock from edge');
     undockFloatBall();
   }
 
@@ -990,6 +1056,7 @@ ipcMain.handle('floatball:expand', () => {
     newX = Math.max(workArea.x, Math.min(newX, workArea.x + workArea.width - HBAR_WIDTH));
     newY = Math.max(workArea.y, Math.min(newY, workArea.y + workArea.height - HBAR_HEIGHT));
 
+    fbLog('[floatball] expand horizontal at', x, y, '->', newX, newY, HBAR_WIDTH + 'x' + HBAR_HEIGHT);
     floatBallWindow.setBounds({
       x: newX,
       y: newY,
@@ -1019,6 +1086,7 @@ ipcMain.handle('floatball:expand', () => {
     if (newY < workArea.y) newY = workArea.y;
   }
 
+  fbLog('[floatball] expand vertical at', x, y, '->', newX, newY, POPUP_WIDTH + 'x' + POPUP_HEIGHT);
   floatBallWindow.setBounds({
     x: newX,
     y: newY,
@@ -1031,6 +1099,7 @@ ipcMain.handle('floatball:expand', () => {
 // Collapse the float ball window back to just the ball
 ipcMain.handle('floatball:collapse', () => {
   if (!floatBallWindow || floatBallWindow.isDestroyed()) return;
+  fbLog('[floatball] collapse');
 
   // Restore the pre-expand ball position (where the user placed it) unless
   // the ball has since been docked to an edge — the dock owns the position.

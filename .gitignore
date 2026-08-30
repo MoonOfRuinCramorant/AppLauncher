@@ -12,6 +12,7 @@ config.local.json
 # Logs
 *.log
 npm-debug.log*
+.fb-log.txt
 
 # Local dev helper scripts
 .launch-app.js
