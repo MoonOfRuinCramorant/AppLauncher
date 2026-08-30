@@ -216,11 +216,28 @@ const BALL_SIZE = 56;
 const POPUP_WIDTH = 190;
 const POPUP_HEIGHT = 340;
 
+// Clamp the ball so it stays FULLY inside the visible work area of the
+// display nearest to the given point. This is the safety net that makes
+// the ball impossible to lose: positions saved/restored/dropped off-screen
+// (resolution change, monitor unplugged, edge drops) are pulled back in.
+function clampBallToWorkArea(x, y, size = BALL_SIZE, point = null) {
+  const ref = point || { x: x + size / 2, y: y + size / 2 };
+  const wa = screen.getDisplayNearestPoint(ref).workArea;
+  const cx = Math.min(Math.max(x, wa.x), wa.x + wa.width - size);
+  const cy = Math.min(Math.max(y, wa.y), wa.y + wa.height - size);
+  return { x: cx, y: cy };
+}
+
 function createFloatBallWindow() {
   if (floatBallWindow) return;
 
   const config = loadConfig();
   const s = config.settings;
+
+  // Clamp the restored position into the visible work area — if the saved
+  // spot is off-screen (resolution change, monitor unplugged, old bug), the
+  // ball would otherwise be invisible on launch ("disappeared").
+  const startPos = clampBallToWorkArea(s.floatBallX || 100, s.floatBallY || 100);
 
   floatBallWindow = new BrowserWindow({
     width: BALL_SIZE,
@@ -231,8 +248,8 @@ function createFloatBallWindow() {
     resizable: false,
     skipTaskbar: true,
     hasShadow: false,
-    x: s.floatBallX || 100,
-    y: s.floatBallY || 100,
+    x: startPos.x,
+    y: startPos.y,
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -277,17 +294,28 @@ function destroyFloatBallWindow() {
   if (floatBallWindow) {
     stopDragFollow();
     stopEdgeWatch();
-    dockState = { side: null, hidden: false, freeX: 0, freeY: 0, lastOutTime: 0 };
-    // Save position before destroying
-    if (floatBallWindow) {
-      // If the ball was docked to an edge, restore the free position instead
-      const sx = dockState.side ? dockState.freeX : floatBallWindow.getPosition()[0];
-      const sy = dockState.side ? dockState.freeY : floatBallWindow.getPosition()[1];
+    // Save position BEFORE resetting dock state: if the ball was docked to
+    // an edge we must persist the remembered free position, not the docked
+    // edge position (which is almost entirely off-screen and would look
+    // like the ball "disappeared" when re-enabled).
+    try {
+      let x, y;
+      if (dockState.side) {
+        x = dockState.freeX;
+        y = dockState.freeY;
+      } else {
+        [x, y] = floatBallWindow.getPosition();
+      }
+      const pos = clampBallToWorkArea(x, y);
       const config = loadConfig();
-      config.settings.floatBallX = sx;
-      config.settings.floatBallY = sy;
+      config.settings.floatBallX = pos.x;
+      config.settings.floatBallY = pos.y;
       saveConfig(config);
+    } catch (err) {
+      console.error('Failed to save float ball position on destroy:', err);
     }
+    dockState = { side: null, hidden: false, freeX: 0, freeY: 0, lastOutTime: 0 };
+    preExpandPos = null;
     floatBallWindow.destroy();
     floatBallWindow = null;
   }
@@ -301,21 +329,23 @@ function destroyFloatBallWindow() {
 // window while dragging.
 
 let dragTimer = null;
-let dragOffset = { x: 0, y: 0 };
+let dragLastCursor = null;
+// Ball position before the popup expanded — restored on collapse so the
+// ball returns to where the user placed it after using the quick panel.
+let preExpandPos = null;
 
 function stopDragFollow() {
   if (dragTimer) {
     clearInterval(dragTimer);
     dragTimer = null;
   }
+  dragLastCursor = null;
 }
 
 function startDragFollow() {
   if (!floatBallWindow || floatBallWindow.isDestroyed()) return;
   stopDragFollow();
-  const cursor = screen.getCursorScreenPoint();
-  const [wx, wy] = floatBallWindow.getPosition();
-  dragOffset = { x: cursor.x - wx, y: cursor.y - wy };
+  dragLastCursor = screen.getCursorScreenPoint();
 
   // If the ball was docked to the edge, dragging it out cancels the dock
   cancelDockKeepPosition();
@@ -326,17 +356,40 @@ function startDragFollow() {
       return;
     }
     const cursorNow = screen.getCursorScreenPoint();
-    floatBallWindow.setPosition(cursorNow.x - dragOffset.x, cursorNow.y - dragOffset.y);
+    if (dragLastCursor.x !== cursorNow.x || dragLastCursor.y !== cursorNow.y) {
+      const [wx, wy] = floatBallWindow.getPosition();
+      // Delta-based movement: apply the cursor's movement to the window's
+      // CURRENT position. Unlike absolute positioning this stays correct
+      // even when other code moves the window mid-drag (e.g. the popup
+      // collapsing back to ball size shifts the top-left corner).
+      const nx = wx + (cursorNow.x - dragLastCursor.x);
+      const ny = wy + (cursorNow.y - dragLastCursor.y);
+      // Clamp into the cursor's display work area every frame: the ball
+      // can never be dragged off-screen, so it can never be "lost" by
+      // releasing the mouse at a screen edge.
+      const safe = clampBallToWorkArea(nx, ny, BALL_SIZE, cursorNow);
+      floatBallWindow.setPosition(safe.x, safe.y);
+    }
+    dragLastCursor = cursorNow;
   }, 16);
 }
 
 function saveFloatBallPosition() {
   try {
     if (!floatBallWindow || floatBallWindow.isDestroyed()) return;
-    const [x, y] = floatBallWindow.getPosition();
+    // When docked, persist the remembered free position — the docked edge
+    // position is mostly off-screen by design and must not be saved.
+    let x, y;
+    if (dockState.side) {
+      x = dockState.freeX;
+      y = dockState.freeY;
+    } else {
+      [x, y] = floatBallWindow.getPosition();
+    }
+    const pos = clampBallToWorkArea(x, y);
     const config = loadConfig();
-    config.settings.floatBallX = x;
-    config.settings.floatBallY = y;
+    config.settings.floatBallX = pos.x;
+    config.settings.floatBallY = pos.y;
     saveConfig(config);
   } catch (err) {
     console.error('Failed to save float ball position:', err);
@@ -384,7 +437,10 @@ function dockFloatBall(side) {
   }
   floatBallWindow.setPosition(nx, ny);
 
-  // If the popup was open, collapse it so the window shrinks back to the ball
+  // If the popup was open, collapse it so the window shrinks back to the ball.
+  // Clear preExpandPos first so the collapse handler does not "restore" the
+  // pre-popup position and undo the dock we just applied above.
+  preExpandPos = null;
   if (isFloatBallPopupOpen()) {
     floatBallWindow.setBounds({ width: BALL_SIZE, height: BALL_SIZE });
     sendToFloatBall('floatball:collapseUI');
@@ -434,7 +490,9 @@ function cancelDockKeepPosition() {
 function undockFloatBall() {
   stopEdgeWatch();
   if (!floatBallWindow || floatBallWindow.isDestroyed()) return;
-  floatBallWindow.setPosition(dockState.freeX, dockState.freeY);
+  // Restore the remembered free position, clamped into the visible area
+  const safe = clampBallToWorkArea(dockState.freeX, dockState.freeY);
+  floatBallWindow.setPosition(safe.x, safe.y);
   dockState = { side: null, hidden: false, freeX: 0, freeY: 0, lastOutTime: 0 };
 }
 
@@ -557,18 +615,9 @@ app.whenReady().then(() => {
 app.on('before-quit', () => {
   isQuitting = true;
   // Save float ball position so it restores at the same spot next launch
+  // (dock-aware + clamped into the visible work area)
   if (floatBallWindow && !floatBallWindow.isDestroyed()) {
-    try {
-      // If the ball was docked to an edge, restore the free position instead
-      const x = dockState.side ? dockState.freeX : floatBallWindow.getPosition()[0];
-      const y = dockState.side ? dockState.freeY : floatBallWindow.getPosition()[1];
-      const config = loadConfig();
-      config.settings.floatBallX = x;
-      config.settings.floatBallY = y;
-      saveConfig(config);
-    } catch (err) {
-      console.error('Failed to save float ball position on quit:', err);
-    }
+    saveFloatBallPosition();
   }
 });
 
@@ -894,8 +943,20 @@ ipcMain.handle('floatball:expand', () => {
   }
 
   const [x, y] = floatBallWindow.getPosition();
-  const display = screen.getDisplayNearestPoint({ x, y });
+  const display = screen.getDisplayNearestPoint({ x: x + BALL_SIZE / 2, y: y + BALL_SIZE / 2 });
   const workArea = display.workArea;
+
+  // Remember the ball position before expanding; collapse restores it so the
+  // ball returns to where the user placed it after using the quick panel.
+  preExpandPos = { x, y };
+
+  // Fit the popup horizontally inside the work area — a ball sitting near
+  // the right edge would otherwise open a popup clipped off-screen.
+  let newX = x;
+  if (newX + POPUP_WIDTH > workArea.x + workArea.width) {
+    newX = workArea.x + workArea.width - POPUP_WIDTH;
+  }
+  if (newX < workArea.x) newX = workArea.x;
 
   // Check if there's enough space below the ball
   const spaceBelow = workArea.y + workArea.height - y - BALL_SIZE;
@@ -908,7 +969,7 @@ ipcMain.handle('floatball:expand', () => {
   }
 
   floatBallWindow.setBounds({
-    x: x,
+    x: newX,
     y: newY,
     width: POPUP_WIDTH,
     height: POPUP_HEIGHT
@@ -919,12 +980,22 @@ ipcMain.handle('floatball:expand', () => {
 ipcMain.handle('floatball:collapse', () => {
   if (!floatBallWindow || floatBallWindow.isDestroyed()) return;
 
-  const [x, y] = floatBallWindow.getPosition();
-  // When collapsing, keep the ball position stable
-  // The ball is always at the top-left of the window
+  // Restore the pre-expand ball position (where the user placed it) unless
+  // the ball has since been docked to an edge — the dock owns the position.
+  let targetX, targetY;
+  if (preExpandPos && !dockState.side) {
+    targetX = preExpandPos.x;
+    targetY = preExpandPos.y;
+  } else {
+    [targetX, targetY] = floatBallWindow.getPosition();
+  }
+  preExpandPos = null;
+
+  // Safety clamp: the ball must end up fully visible no matter what.
+  const safe = clampBallToWorkArea(targetX, targetY);
   floatBallWindow.setBounds({
-    x: x,
-    y: y,
+    x: safe.x,
+    y: safe.y,
     width: BALL_SIZE,
     height: BALL_SIZE
   });
@@ -1045,15 +1116,11 @@ ipcMain.on('floatball:rightClick', () => {
     {
       label: '关闭悬浮球',
       click: () => {
-        // Save position
-        if (floatBallWindow && !floatBallWindow.isDestroyed()) {
-          const [x, y] = floatBallWindow.getPosition();
-          const config = loadConfig();
-          config.settings.floatBallEnabled = false;
-          config.settings.floatBallX = x;
-          config.settings.floatBallY = y;
-          saveConfig(config);
-        }
+        // Just flip the setting; destroyFloatBallWindow persists the
+        // (dock-aware, clamped) position on its own.
+        const config = loadConfig();
+        config.settings.floatBallEnabled = false;
+        saveConfig(config);
         destroyFloatBallWindow();
         // Notify main window to update settings UI
         if (mainWindow && !mainWindow.isDestroyed()) {
