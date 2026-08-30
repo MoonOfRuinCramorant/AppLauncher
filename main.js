@@ -262,6 +262,61 @@ const HBAR_POPUP_WIDTH = HBAR_ITEMS * HBAR_ICON + (HBAR_ITEMS - 1) * HBAR_GAP + 
 const HBAR_WIDTH = HBAR_POPUP_WIDTH + BALL_SIZE + HBAR_BALL_GAP;
 const HBAR_HEIGHT = BALL_SIZE; // 56: no vertical resize -> ball does not shift
 
+// Re-assert the always-on-top flag on the float ball window. On Windows a
+// transparent always-on-top window can silently drop OUT of the topmost
+// layer when it takes focus or is resized (setBounds) while another app
+// (browser, etc.) is in the foreground — the ball then appears to
+// "vanish" because the foreground window covers it. The plain
+// setAlwaysOnTop(true) call only re-sets the WS_EX_TOPMOST flag, which
+// is not enough by itself; we also need moveTop() so the window is
+// physically pushed to the front of its z-band, and we do that on a slow
+// timer (every 2.5s) so silent drops mid-session are recovered.
+function assertFloatBallTopmost() {
+  if (!floatBallWindow || floatBallWindow.isDestroyed()) return;
+  try {
+    // 'screen-saver' is the highest z-level Windows exposes — Windows
+    // treats it as above 'topmost', so a foreground browser (which sits
+    // at 'topmost' when its window has WS_EX_TOPMOST) cannot cover us
+    // after a focus change.
+    floatBallWindow.setAlwaysOnTop(true, 'screen-saver');
+    // moveTop() calls BringWindowToTop, which promotes us inside our
+    // z-band. Crucially, per Electron docs this does NOT steal focus
+    // from whatever the user is currently using — the ball never
+    // interrupts typing in the foreground app.
+    floatBallWindow.moveTop();
+  } catch (_) {}
+}
+
+// Periodic safety net: re-assert topmost every couple of seconds so that
+// even OS-level z-order changes we can't observe (UWP app foreground
+// flapping, anti-cheat / accessibility tools snapping us down, etc.) are
+// eventually self-healed within one tick. Cleared when the ball is
+// disabled or the window is destroyed.
+let topmostKeepAliveTimer = null;
+function startTopmostKeepAlive() {
+  stopTopmostKeepAlive();
+  topmostKeepAliveTimer = setInterval(() => {
+    if (!floatBallWindow || floatBallWindow.isDestroyed()) {
+      stopTopmostKeepAlive();
+      return;
+    }
+    try {
+      // Only re-assert when actually visible — when the window is hidden
+      // on purpose (e.g. during dock-to-edge, or during shutdown) we
+      // leave it alone so we don't fight the user's intent.
+      if (floatBallWindow.isVisible() && !floatBallWindow.isAlwaysOnTop()) {
+        assertFloatBallTopmost();
+      }
+    } catch (_) {}
+  }, 2500);
+}
+function stopTopmostKeepAlive() {
+  if (topmostKeepAliveTimer) {
+    clearInterval(topmostKeepAliveTimer);
+    topmostKeepAliveTimer = null;
+  }
+}
+
 // Clamp the ball so it stays FULLY inside the visible work area of the
 // display nearest to the given point. This is the safety net that makes
 // the ball impossible to lose: positions saved/restored/dropped off-screen
@@ -308,6 +363,9 @@ function createFloatBallWindow() {
   floatBallWindow.loadFile('floatball.html');
   floatBallWindow.once('ready-to-show', () => {
     floatBallWindow.show();
+    // Make sure the freshly shown window sits on the topmost layer.
+    assertFloatBallTopmost();
+    startTopmostKeepAlive();
     // Send current theme and settings
     floatBallWindow.webContents.send('floatball:init', {
       theme: s.theme,
@@ -323,22 +381,26 @@ function createFloatBallWindow() {
 
   floatBallWindow.on('closed', () => {
     fbLog('[floatball] closed');
+    stopTopmostKeepAlive();
     floatBallWindow = null;
   });
 
+  // When the OS tells us the window changed visibility for any reason
+  // (alt-tab, Win+D, screen lock, or a competing topmost window briefly
+  // burying us) we re-assert so we stay the highest floating widget.
+  floatBallWindow.on('show', () => assertFloatBallTopmost());
+  floatBallWindow.on('focus', () => assertFloatBallTopmost());
+  floatBallWindow.on('move', () => assertFloatBallTopmost());
+  floatBallWindow.on('resize', () => assertFloatBallTopmost());
+
   // Fallback: if the window loses focus mid-drag (e.g. mouse released
   // outside the window after the window failed to follow), stop the drag
-  // so the ball never gets stuck in a broken dragging state.
+  // so the ball never gets stuck in a broken dragging state. Blur is also
+  // a classic moment where Windows loses the topmost flag, so re-assert.
   floatBallWindow.on('blur', () => {
     fbLog('[floatball] blur -> stopDragFollow + reassert topmost');
     stopDragFollow();
-    // On Windows a transparent always-on-top window can silently drop out
-    // of the topmost layer when focus moves to another app. Re-assert it
-    // on every blur so the ball can never get buried under the foreground
-    // window (the "ball vanished over a webpage" bug).
-    try {
-      floatBallWindow.setAlwaysOnTop(true);
-    } catch (_) {}
+    assertFloatBallTopmost();
   });
 
   // If the renderer dies (GPU/transparent-window glitches on Windows), the
@@ -357,6 +419,7 @@ function createFloatBallWindow() {
       createFloatBallWindow();
       if (floatBallWindow && !floatBallWindow.isDestroyed()) {
         floatBallWindow.setPosition(pos[0], pos[1]);
+        assertFloatBallTopmost();
         if (wasDocked && dock.side) dockFloatBall(dock.side);
       }
     }
@@ -374,6 +437,7 @@ function destroyFloatBallWindow() {
   if (floatBallWindow) {
     stopDragFollow();
     stopEdgeWatch();
+    stopTopmostKeepAlive();
     // Save position BEFORE resetting dock state: if the ball was docked to
     // an edge we must persist the remembered free position, not the docked
     // edge position (which is almost entirely off-screen and would look
@@ -1030,9 +1094,11 @@ ipcMain.handle('floatball:expand', () => {
   // Guard against the ball "vanishing" when another app (browser, etc.) is
   // in the foreground: on Windows a transparent always-on-top window can
   // drop out of the topmost layer after it takes focus. Re-assert topmost
-  // and make sure the window is actually visible before sizing the popup.
+  // (at 'screen-saver' level so we sit above any other topmost window) and
+  // make sure the window is actually visible before sizing the popup.
   try {
-    floatBallWindow.setAlwaysOnTop(true);
+    floatBallWindow.setAlwaysOnTop(true, 'screen-saver');
+    floatBallWindow.moveTop();
     if (!floatBallWindow.isVisible()) {
       fbLog('[floatball] expand: window not visible -> show()');
       floatBallWindow.show();
@@ -1089,6 +1155,15 @@ ipcMain.handle('floatball:expand', () => {
       width: HBAR_WIDTH,
       height: HBAR_HEIGHT
     });
+    // Windows can drop a transparent always-on-top window out of the
+    // topmost layer WHILE it is being resized, especially when another
+    // app (browser, etc.) was in the foreground. This is the "ball
+    // vanished after a click over a webpage" bug. The resize happens
+    // synchronously but the topmost flag loss may settle a moment later,
+    // so re-assert now and again after the resize has fully settled.
+    assertFloatBallTopmost();
+    setTimeout(assertFloatBallTopmost, 120);
+    setTimeout(assertFloatBallTopmost, 400);
     // Ball is always at the right end of the bar in horizontal mode.
     return { style: 'horizontal', direction: 'right' };
   }
@@ -1120,6 +1195,10 @@ ipcMain.handle('floatball:expand', () => {
     width: POPUP_WIDTH,
     height: POPUP_HEIGHT
   });
+  // Same topmost re-assertion as the horizontal branch (see above).
+  assertFloatBallTopmost();
+  setTimeout(assertFloatBallTopmost, 120);
+  setTimeout(assertFloatBallTopmost, 400);
   return { style: 'vertical', direction: null };
 });
 
@@ -1303,51 +1382,55 @@ async function chooseFloatBallIcon() {
 
     const filePath = result.filePaths[0];
 
-    // Decode the picked image into a PNG data URL that the crop window's
-    // renderer can always draw. We previously sent the raw file bytes
-    // through with a MIME guessed from the extension — that silently
-    // fails for formats Chromium can't decode from a "lying" extension
-    // (notably ICO/WebP/BMP) and the crop container ends up blank because
-    // the <img> load errors out without any visible error in this window.
+    // Decode / copy the picked image into a *real PNG file* on disk under
+    // userData/crop-temp/ and pass the file:// URL to the renderer. This
+    // is the most reliable image-loading path in Electron, and avoids
+    // three historical bugs in one shot:
     //
-    // Strategy:
-    //  1. Try nativeImage.createFromBuffer() — Electron decodes the bytes
-    //     using format sniffers that handle ICO/WebP/BMP/GIF etc.
-    //  2. Fall back to a magic-byte-detected raw data URL.
-    let dataUrl = null;
+    //   (a) The previous v1.1.6 data-URL path was silently rejected by
+    //       Chromium for some images (notably PNG with a tRNS chunk that
+    //       conflicted with the alpha channel — see "tRNS: invalid with
+    //       alpha channel" libpng warnings). The crop container stayed
+    //       transparent and the user had no way to know the data hadn't
+    //       arrived.
+    //   (b) The v1.1.7 Buffer→Blob-URL path was blocked by crop.html's
+    //       strict CSP: `img-src 'self' data:;` did NOT include `blob:`,
+    //       so the Blob URL was rejected by the CSP layer BEFORE <img>
+    //       even tried to decode the bytes — onerror fired and we showed
+    //       "无法加载所选图片". Easy to miss because there is no console
+    //       error in production builds.
+    //   (c) IPC payload-size sanity (base64 inflation, structured-clone
+    //       edge cases for huge buffers). A 5 MB PNG became a 6.7 MB
+    //       message, which occasionally tripped the per-channel limit.
+    //
+    // Writing to disk and using file:// is:
+    //   • under CSP ('self' covers file://→file://)
+    //   • zero-copy (Chromium reads the bytes straight from disk)
+    //   • MIME-agnostic (the browser sniffs magic bytes)
+    //   • lifecycle-clean (we delete the temp file on close).
+
+    let tempPath = null;
     try {
-      const buffer = fs.readFileSync(filePath);
-      const nativeImg = nativeImage.createFromBuffer(buffer);
-      if (!nativeImg.isEmpty()) {
-        const png = nativeImg.toPNG();
-        if (png && png.length > 0) {
-          dataUrl = `data:image/png;base64,${png.toString('base64')}`;
-        }
-      }
-      if (!dataUrl) {
-        // Last-resort fallback: detect MIME from the file's magic bytes so
-        // the renderer doesn't get told "this is a PNG" when the bytes are
-        // actually a JPEG/ICO/etc. (root cause of the "blank crop window"
-        // regression the user kept seeing).
-        const mime = detectImageMimeFromBuffer(buffer);
-        dataUrl = `data:${mime};base64,${buffer.toString('base64')}`;
-        fbLog('[icon] nativeImage empty, falling back to raw data URL with detected mime:', mime);
-      }
+      tempPath = writeIconTempFile(filePath);
     } catch (err) {
-      fbLog('[icon] chooseFloatBallIcon read error', err.message);
-      console.error('Failed to decode float ball icon:', err);
+      fbLog('[icon] temp file write failed:', err.message);
+      console.error('Failed to stage float ball icon:', err);
       return;
     }
 
-    // Open the crop window so the user can crop the image into a circular
-    // icon before it is applied. Returns null when the user cancels.
-    const cropped = await openIconCropWindow(dataUrl);
-    if (!cropped) return;
+    try {
+      const cropped = await openIconCropWindow(tempPath);
+      if (!cropped) return;
 
-    const config = loadConfig();
-    config.settings.floatBallIcon = cropped;
-    saveConfig(config);
-    sendToFloatBall('floatball:settingsChanged', { ballIcon: cropped });
+      const config = loadConfig();
+      config.settings.floatBallIcon = cropped;
+      saveConfig(config);
+      sendToFloatBall('floatball:settingsChanged', { ballIcon: cropped });
+    } finally {
+      // Always clean up the temp file, whether the user confirmed or
+      // cancelled — never leak temp PNGs into userData.
+      cleanupCropTempFile(tempPath);
+    }
   } catch (err) {
     console.error('Failed to choose float ball icon:', err);
   }
@@ -1357,10 +1440,13 @@ async function chooseFloatBallIcon() {
 // A small modal window that lets the user crop the picked image into a
 // circular float-ball icon. The ball itself is alwaysOnTop, so this window
 // is raised to the 'screen-saver' level to sit above it.
+//
+// The image is staged on disk under userData/crop-temp/ and passed to the
+// renderer as a file:// URL. This is the most reliable image-loading path
+// in Electron — see chooseFloatBallIcon() for the full rationale.
 
-// Magic-byte MIME detector — used when nativeImage fails to decode a file
-// (e.g. some ICO variants), so the renderer still receives a data URL with
-// a correct content-type hint.
+// Magic-byte MIME detector — kept around so unit tests can verify it sniffs
+// real PNG/JPEG/BMP/etc correctly. Not used in the production flow.
 function detectImageMimeFromBuffer(buf) {
   if (!buf || buf.length < 4) return 'image/png';
   const b0 = buf[0], b1 = buf[1], b2 = buf[2], b3 = buf[3];
@@ -1381,8 +1467,99 @@ function detectImageMimeFromBuffer(buf) {
   return 'image/png';
 }
 
+// Path-safe directory for cropped-icon staging files. Created lazily.
+let cropTempDirCache = null;
+function getCropTempDir() {
+  if (cropTempDirCache && fs.existsSync(cropTempDirCache)) return cropTempDirCache;
+  const dir = path.join(app.getPath('userData'), 'crop-temp');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  cropTempDirCache = dir;
+  return dir;
+}
+
+// Decode the source image into a real file on disk under userData/crop-temp/
+// and return its absolute path. The renderer receives the file:// URL and
+// hands it straight to <img> — Chromium decodes whatever magic bytes the
+// file advertises.
+//
+// v1.1.8 originally routed every picked image through `nativeImage.toPNG()`
+// to "guarantee" the renderer saw a valid PNG. In practice that helper
+// doubles/quadruples the file size on some inputs AND occasionally writes
+// out a buffer that Chromium parses as a PNG (header OK, magic byte OK)
+// but cannot fully decode — `<img>` fires onload with naturalWidth=0, the
+// crop frame is drawn around a 0-px ghost, and the user sees the
+// transparent checkerboard. v1.1.8's "fallback to raw bytes" path only
+// kicked in when nativeImage was empty; it didn't cover the silent
+// decode-failure case.
+//
+// We now: always copy the source bytes unchanged, keeping the original
+// extension. Chromium sniffs magic bytes regardless of extension, so this
+// works for PNG / JPEG / WEBP / BMP / GIF / ICO without further help.
+// nativeImage is reserved as an *optional* repair step (only used when
+// the file is missing or unreadable), never as the primary code path.
+function writeIconTempFile(srcPath) {
+  const dir = getCropTempDir();
+  const srcExt = (path.extname(srcPath) || '.png').toLowerCase();
+  const outPath = path.join(dir, `icon-${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 8)}${srcExt}`);
+
+  // Read the source file as raw bytes — *no* nativeImage in the loop.
+  // We trust Chromium's image decoder (libpng/skia) more than
+  // `nativeImage.toPNG()` because the former has been decoding user
+  // images correctly for years, while the latter is a thin Electron
+  // wrapper that has historically produced broken output on tRNS PNGs
+  // and oversized buffers.
+  let bytes;
+  try {
+    bytes = fs.readFileSync(srcPath);
+    if (!bytes || bytes.length === 0) throw new Error('source file is empty');
+  } catch (err) {
+    fbLog('[icon] stage source read failed:', err.message);
+    // As a last-ditch fallback, hand the renderer whatever nativeImage
+    // can produce — even a damaged buffer is better than nothing, and
+    // the renderer's strategy chain will fall through to the legacy
+    // data URL if it can't decode.
+    try {
+      const ni = nativeImage.createFromPath(srcPath);
+      if (!ni.isEmpty()) {
+        bytes = ni.toPNG();
+        if (bytes && bytes.length) {
+          const fallback = path.join(dir, `icon-${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 8)}.png`);
+          fs.writeFileSync(fallback, bytes);
+          fbLog('[icon] staged via nativeImage fallback =', fallback);
+          return fallback;
+        }
+      }
+    } catch (_) { /* ignore */ }
+    throw err;
+  }
+
+  fs.writeFileSync(outPath, bytes);
+  fbLog('[icon] staged raw bytes =', outPath, 'size =', bytes.length, 'mime sniffed from ext =', srcExt);
+  return outPath;
+}
+
+function cleanupCropTempFile(p) {
+  if (!p) return;
+  try {
+    if (fs.existsSync(p)) fs.unlinkSync(p);
+  } catch (err) {
+    fbLog('[icon] temp cleanup warn:', err.message);
+  }
+}
+
+// Convert a Windows path (C:\foo\bar.png) to a file:// URL that Chromium
+// will accept: file:///C:/foo/bar.png
+function pathToFileUrl(absPath) {
+  let p = absPath.replace(/\\/g, '/');
+  // Electron 32+ requires the drive letter to be inside the URL path
+  // part with a leading slash, e.g. file:///C:/Users/foo/x.png
+  if (/^[A-Za-z]:\//.test(p)) p = '/' + p;
+  return 'file://' + encodeURI(p).replace(/#/g, '%23').replace(/\?/g, '%3F');
+}
+
 let cropWindow = null;
 let cropResolve = null;
+let cropTempPath = null;     // currently-staged icon file (for emergency cleanup)
 
 function closeCropWindow() {
   if (cropWindow) {
@@ -1391,10 +1568,13 @@ function closeCropWindow() {
   }
 }
 
-function openIconCropWindow(imageDataUrl) {
+function openIconCropWindow(imageFilePath) {
   return new Promise((resolve) => {
     closeCropWindow();
     cropResolve = resolve;
+    cropTempPath = imageFilePath;       // remember so we can clean up if needed
+
+    const imageUrl = pathToFileUrl(imageFilePath);
 
     cropWindow = new BrowserWindow({
       width: 540,
@@ -1419,13 +1599,30 @@ function openIconCropWindow(imageDataUrl) {
     cropWindow.setAlwaysOnTop(true, 'screen-saver');
 
     cropWindow.loadFile('crop.html');
-    cropWindow.once('ready-to-show', () => {
+
+    // Hook the init send to did-finish-load (which fires after the
+    // renderer's IPC listeners have been registered), not to
+    // ready-to-show — IPC messages sent to a not-yet-listening webContents
+    // are silently dropped, which was the secondary bug behind the
+    // "blank crop window" reports.
+    cropWindow.webContents.once('did-finish-load', () => {
       cropWindow.show();
-      cropWindow.webContents.send('crop:init', { imageDataUrl });
+      try {
+        cropWindow.webContents.send('crop:init', {
+          imageUrl: imageUrl,           // primary path — file:// URL
+          imagePath: imageFilePath,     // debug breadcrumb
+          imageBytes: null,             // legacy field; renderer ignores when imageUrl is present
+          imageMime: 'image/png'
+        });
+        fbLog('[icon] crop:init sent, url =', imageUrl);
+      } catch (err) {
+        fbLog('[icon] crop:init send failed:', err.message);
+      }
     });
 
     cropWindow.on('closed', () => {
       cropWindow = null;
+      cropTempPath = null;
       if (cropResolve) {
         const r = cropResolve;
         cropResolve = null;

@@ -280,28 +280,33 @@ body.popup-horizontal #ball:active {
   transform: none;
 }
 
-/* The horizontal bar fills the window height and leaves a clean slot on
-   the right for the ball. No animation (prevents flash on open), no
-   visible chrome (transparent background), no scrollbars (overflow:hidden
-   on every layer). */
+/* The horizontal bar renders as a real rounded card ("the box") that hugs
+   the LEFT side of the ball: its right edge is pinned 60px from the window
+   right edge (48px ball + 12px gap), its width grows to fit the icons
+   (max-content) so with few recent apps the box is short and sits right
+   next to the ball instead of stretching across the whole window. No
+   animation (prevents flash on open), no scrollbars (overflow:hidden on
+   every layer). */
 body.popup-horizontal .float-popup {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 60px;          /* ball (48) + 12px gap */
-  bottom: 0;
+  top: 4px;
+  bottom: 4px;
+  left: auto;
+  right: 60px;              /* ball (48) + 12px gap */
+  width: max-content;       /* box hugs its content — short when few icons */
+  max-width: calc(100% - 64px);
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: flex-end; /* icons align toward the ball (right side) */
+  background: var(--fb-bar-bg, rgba(255, 255, 255, 0.96));
+  border: 1px solid var(--fb-bar-border, rgba(0, 0, 0, 0.06));
   border-radius: var(--fb-bar-radius, 14px);
-  padding: 8px 10px;
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  animation: none;       /* No popupAppear — was the visible flash */
-  overflow: hidden;     /* clip overflow, no scrollbar ever */
+  box-shadow: var(--fb-bar-shadow, 0 8px 32px rgba(0, 0, 0, 0.18));
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  padding: 0 8px;
+  animation: none;          /* No popupAppear — was the visible flash */
+  overflow: hidden;         /* clip overflow, no scrollbar ever */
 }
 
 body.popup-horizontal .popup-header {
@@ -312,6 +317,7 @@ body.popup-horizontal .popup-app-list {
   display: flex;
   flex-direction: row;
   align-items: center;        /* vertically centered = same height as ball */
+  justify-content: flex-end;  /* push icons against the ball's left side */
   gap: 6px;
   flex-wrap: nowrap;          /* single row — never wrap to a 2nd line */
   max-width: 100%;

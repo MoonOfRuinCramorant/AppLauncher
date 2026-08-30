@@ -206,30 +206,146 @@
   closeBtn.addEventListener('click', () => window.api.cropCancel());
 
   // ========== Init: receive image from main process ==========
+  //
+  // We support three payload formats, in priority order:
+  //
+  //   1. (preferred) { imageUrl: 'file:///C:/.../icon-...png' }
+  //      The main process stages the picked image on disk under
+  //      userData/crop-temp/ and sends the file:// URL. This path is
+  //      CSP-safe ('self' covers file://→file://), zero-copy, and
+  //      MIME-agnostic (Chromium sniffs magic bytes).
+  //
+  //   2. (legacy) { imageBytes: Uint8Array, imageMime: string }
+  //      Main wraps the raw bytes in a Blob and feeds <img> a Blob URL.
+  //      Kept as a fallback in case the temp-file write fails (e.g.
+  //      disk full, permission denied on userData).
+  //
+  //   3. (very legacy) { imageDataUrl: 'data:image/...;base64,...' }
+  //      Even older installs — kept for completeness but should not
+  //      appear in v1.1.7+ builds.
+
+  let activeBlobUrl = null;
 
   window.api.cropOnInit((data) => {
-    if (!data || !data.imageDataUrl) {
+    if (!data) {
       showError('未收到图片数据，请重试');
       return;
     }
-    img = new Image();
-    img.onload = () => {
-      imgW = img.naturalWidth;
-      imgH = img.naturalHeight;
-      // Guard against images without an intrinsic size (e.g. broken/odd
-      // files that still "decode"): fall back to a 512x512 virtual size so
-      // the UI never ends up with an invisible image on a blank canvas.
-      if (!imgW || !imgH) {
-        imgW = 512;
-        imgH = 512;
+    // Clean up any previous blob URL to avoid memory leaks across opens.
+    if (activeBlobUrl) {
+      URL.revokeObjectURL(activeBlobUrl);
+      activeBlobUrl = null;
+    }
+
+    // Try each known loader in priority order. The first one that sets
+    // a non-empty src wins; if <img> fires onerror we fall through to
+    // the next strategy. This keeps one bad channel from locking the
+    // user out of the cropper entirely.
+    const strategies = [];
+
+    if (typeof data.imageUrl === 'string' && data.imageUrl.length > 0) {
+      strategies.push({ name: 'fileUrl', src: data.imageUrl });
+    }
+    if (data.imageBytes && (data.imageBytes.length || data.imageBytes.byteLength)) {
+      try {
+        const mime = data.imageMime || 'image/png';
+        const buf = data.imageBytes instanceof Uint8Array
+          ? data.imageBytes
+          : new Uint8Array(data.imageBytes);
+        const blob = new Blob([buf], { type: mime });
+        const blobUrl = URL.createObjectURL(blob);
+        activeBlobUrl = blobUrl;
+        strategies.push({ name: 'blob', src: blobUrl });
+      } catch (err) {
+        // ignore — fall through
       }
-      hideError();
-      fitImage();
+    }
+    if (typeof data.imageDataUrl === 'string' && data.imageDataUrl.length > 0) {
+      strategies.push({ name: 'dataUrl', src: data.imageDataUrl });
+    }
+
+    if (strategies.length === 0) {
+      showError('未收到图片数据，请重试');
+      return;
+    }
+
+    let attempt = 0;
+    const tryNext = () => {
+      if (attempt >= strategies.length) {
+        showError('无法加载所选图片，请换一张图片后重试');
+        return;
+      }
+      const cur = strategies[attempt++];
+      loadImage(cur.src, (ok) => {
+        if (ok) {
+          // success — hide any previous error
+          hideError();
+          fitImage();
+        } else {
+          tryNext();
+        }
+      });
     };
-    img.onerror = () => {
-      showError('无法加载所选图片，请换一张图片后重试');
-    };
-    img.src = data.imageDataUrl;
+
+    function loadImage(src, cb) {
+      const probe = new Image();
+      let settled = false;
+      const finish = (ok) => {
+        if (settled) return;
+        settled = true;
+        cb(ok);
+      };
+      // Belt-and-braces timeout: if neither onload nor onerror fires
+      // within 4s (which can happen with corrupt-but-header-valid
+      // files that Chromium tries to parse forever), assume the load
+      // failed and let the strategy chain move on.
+      const timer = setTimeout(() => {
+        if (!settled) finish(false);
+      }, 4000);
+      // Important: we hand the source URL to BOTH the off-screen probe
+      // (used by doCrop's canvas.drawImage) and the on-page <img>
+      // (imgEl — the one the user actually sees). Previous versions
+      // only fed the probe, which is why the page-side container was
+      // forever transparent: imgEl.style was being set (width/height/
+      // transform) but its `src` attribute was always empty, so the
+      // browser never painted anything.
+      //
+      // We set imgEl.src *inside* onload so we don't briefly show a
+      // broken-image icon if the first attempt fails and we move on
+      // to the next strategy. Instead, we set both src at the same
+      // moment once we know this strategy actually decoded.
+      probe.onload = () => {
+        clearTimeout(timer);
+        // The previous version silently accepted onload-with-zero-size
+        // and substituted a 512x512 virtual size, so the crop frame would
+        // render around an invisible phantom <img>. That was the v1.1.8
+        // failure mode (frame visible, image blank, no error message).
+        // Treat 0×0 onload as a hard load failure and let the strategy
+        // chain fall through — a real image will give us a real size.
+        if (!probe.naturalWidth || !probe.naturalHeight) {
+          finish(false);
+          return;
+        }
+        img = probe;
+        imgW = probe.naturalWidth;
+        imgH = probe.naturalHeight;
+        // Now that we know the bytes decode correctly, hand the same
+        // source to the on-page <img>. Setting src triggers a fresh
+        // decode (the probe and imgEl are independent Image objects);
+        // since the URL is already validated we don't need to wait
+        // for imgEl to also fire onload — the dimensions and the probe
+        // prove the resource is good.
+        imgEl.src = src;
+        finish(true);
+      };
+      probe.onerror = () => {
+        clearTimeout(timer);
+        finish(false);
+      };
+      probe.src = src;
+    }
+
+    tryNext();
   });
 
   const errEl = document.createElement('div');

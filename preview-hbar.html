@@ -6,91 +6,89 @@
   <link rel="stylesheet" href="floatball.css">
   <style>
     /* Page chrome */
-    body {
+    body.preview {
       background: #2a2a2a;
       margin: 40px;
       color: #eee;
       font-family: "Segoe UI", sans-serif;
     }
     h1 { font-size: 18px; margin-bottom: 12px; }
-    .preview-wrap {
-      background: linear-gradient(135deg, #1e3a8a, #0c4a6e);
-      padding: 20px;
-      border-radius: 8px;
-      width: 760px;
-      margin: 0 auto;
-    }
     .label {
       font-size: 13px;
       color: #ccc;
-      margin-bottom: 6px;
+      margin: 18px 0 6px;
     }
+    /* Simulate the transparent always-on-top Electron window (348x56) */
     .win {
-      /* Simulate a transparent always-on-top window containing the
-         floatball UI. The browser viewport mirrors the Electron window. */
       width: 348px;
       height: 56px;
-      background: rgba(255, 255, 255, 0.10);
-      border: 1px dashed rgba(255, 255, 255, 0.25);
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px dashed rgba(255, 255, 255, 0.22);
+      border-radius: 14px;
       position: relative;
-      border-radius: 4px;
-      margin: 12px 0 8px 0;
+      margin: 10px 0;
       overflow: visible;
     }
-    /* Full window invisible in this preview so we can see the bar layout */
-    .win-realistic {
-      width: 348px;
-      height: 56px;
-      background: rgba(0, 0, 0, 0.3);
-      position: relative;
-      border-radius: 14px;
-      margin: 12px 0;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-    }
-    .margin-note {
+    .win.small { width: 56px; }
+    .note {
       font-size: 11px;
       color: #888;
       margin-left: 12px;
     }
   </style>
 </head>
-<body>
-  <h1>FloatBall 水平选择框 - 布局预览</h1>
-  <p class="margin-note">单击悬浮球时：球不动、左侧弹出水平框、无滚动条、应用与球同高</p>
+<body class="preview">
+  <h1>FloatBall 水平选择框 - 布局预览（v1.1.6）</h1>
+  <p class="note">单击悬浮球：球纹丝不动 · 左侧弹出圆角卡片"框" · 图标紧贴球 · 无滚动条 · 与应用同高</p>
 
   <div class="label">▶ 收起态（单击前）：56×56 悬浮球</div>
-  <div class="win-realistic" style="width: 56px;">
-    <div class="float-ball" style="position: absolute; left: 4px; top: 4px;">
-      <span class="ball-icon">🚀</span>
-    </div>
+  <div class="win small">
+    <div id="ball" class="float-ball"><span class="ball-icon">🚀</span></div>
   </div>
 
-  <div class="label">▶ 展开态（单击后）：348×56 窗口，悬浮球仍在右侧原位置</div>
-  <div class="preview-wrap">
-    <div class="win-realistic">
-      <body class="popup-horizontal popup-hbar-right">
-        <!-- Float ball: anchored on right edge with same coordinates as collapsed state -->
-        <div id="ball" class="float-ball">
-          <span class="ball-icon">🚀</span>
-        </div>
-        <!-- Popup: fills the left side, transparent, items centered vertically -->
-        <div id="popup" class="float-popup" style="display: block;">
-          <div class="popup-app-list" style="display: flex;">
-            <div class="popup-app-item"><div style="font-size: 26px;">📁</div></div>
-            <div class="popup-app-item"><div style="font-size: 26px;">🌐</div></div>
-            <div class="popup-app-item"><div style="font-size: 26px;">💻</div></div>
-            <div class="popup-app-item"><div style="font-size: 26px;">🎵</div></div>
-            <div class="popup-app-item"><div style="font-size: 26px;">⚙️</div></div>
-          </div>
-        </div>
-      </body>
-    </div>
-  </div>
+  <div class="label">▶ 展开态（5 个最近应用）：348×56，框紧贴球左侧</div>
+  <div class="win" id="win5"></div>
 
-  <p class="margin-note">
-    ✓ 球的右侧边缘仍在原屏幕位置（窗口左扩 / 右沿不动）<br>
-    ✓ 球和应用图标都在 top:4-52 区间（垂直中心 = 28）<br>
-    ✓ 列表项 flex-row + overflow:hidden，永不出现滚动条
+  <div class="label">▶ 展开态（仅 2 个最近应用）：框自适应宽度，仍紧贴球</div>
+  <div class="win" id="win2"></div>
+
+  <p class="note">
+    ✓ 球的右边缘仍在原屏幕位置（窗口左扩，右沿不动）<br>
+    ✓ 球与图标垂直中心对齐（top:4-52，中心=28）<br>
+    ✓ overflow:hidden + flex-wrap:nowrap，永不出现滚动条
   </p>
+
+  <script>
+    // The production CSS targets body.popup-horizontal — put the class on
+    // the real <body> (both preview windows then render in bar mode).
+    document.body.classList.add('popup-horizontal');
+
+    // Build a horizontal popup inside the given .win element.
+    function buildBar(containerId, icons) {
+      const container = document.getElementById(containerId);
+      const ball = document.createElement('div');
+      ball.id = 'ball';
+      ball.className = 'float-ball';
+      ball.innerHTML = '<span class="ball-icon">🚀</span>';
+      container.appendChild(ball);
+      const popup = document.createElement('div');
+      popup.id = 'popup';
+      popup.className = 'float-popup';
+      popup.style.display = 'block';
+      const list = document.createElement('div');
+      list.id = 'appList';
+      list.className = 'popup-app-list';
+      icons.forEach(ic => {
+        const item = document.createElement('div');
+        item.className = 'popup-app-item';
+        item.innerHTML = '<div class="popup-app-item-icon">' + ic + '</div>';
+        list.appendChild(item);
+      });
+      popup.appendChild(list);
+      container.appendChild(popup);
+    }
+    buildBar('win5', ['📁', '🌐', '💻', '🎵', '⚙️']);
+    buildBar('win2', ['📁', '🌐']);
+  </script>
 </body>
 </html>

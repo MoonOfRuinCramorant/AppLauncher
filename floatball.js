@@ -158,8 +158,14 @@
   }
 
   async function expandPopup() {
-    state.isExpanded = true;
     const result = await window.api.fbExpand();
+    if (!result) {
+      // The window vanished mid-expand (crash or external close) — don't
+      // leave the UI believing it is expanded.
+      state.isExpanded = false;
+      return;
+    }
+    state.isExpanded = true;
 
     // In horizontal mode the main process always returns direction='right',
     // meaning the bar grew LEFTWARD from the ball's original screen
