@@ -13,6 +13,9 @@ config.local.json
 *.log
 npm-debug.log*
 
+# Local dev helper scripts
+.launch-app.js
+
 # OS files
 Thumbs.db
 .DS_Store
