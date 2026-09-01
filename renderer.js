@@ -1697,7 +1697,13 @@ function initEventListeners() {
         app.lastLaunched = new Date().toISOString();
         app.launchCount = (app.launchCount || 0) + 1;
         await saveConfig();
-        showToast('已请求以管理员身份运行（隐藏窗口），请在弹出的 UAC 窗口中选择“是”', 'success');
+        showToast('已请求以管理员身份运行，请在 UAC 弹窗中选择“是”', 'success');
+        // Respect the same "启动后自动关闭窗口" toggle as the regular
+        // "启动" entry — if the user has it enabled in Settings, hide the
+        // AppLauncher main window now that the target app is launching.
+        if (state.config.settings.launchClose) {
+          setTimeout(() => window.api.hideWindow(), 500);
+        }
       } else {
         showToast(result && result.error ? result.error : '无法以管理员身份运行', 'error');
       }
