@@ -1581,3 +1581,28 @@ body {
 [data-theme="dark"] .crop-selection {
   border-color: rgba(255, 255, 255, 0.9);
 }
+
+/* Float-ball icon picker in Settings */
+.settings-icon-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.floatball-icon-preview {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: rgba(127, 127, 127, 0.12);
+}
+.floatball-icon-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+}

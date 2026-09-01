@@ -162,6 +162,10 @@ const dom = {
   shortcutStatus: $('shortcutStatus'),
   // Float ball settings
   floatBallToggle: $('floatBallToggle'),
+  floatBallIconRow: $('floatBallIconRow'),
+  floatBallIconPreview: $('floatBallIconPreview'),
+  floatBallIconBtn: $('floatBallIconBtn'),
+  floatBallIconResetBtn: $('floatBallIconResetBtn'),
   floatBallClickRow: $('floatBallClickRow'),
   floatBallDblClickRow: $('floatBallDblClickRow'),
   floatBallPopupStyleRow: $('floatBallPopupStyleRow'),
@@ -288,6 +292,14 @@ async function saveConfig() {
 
 // ========== Data Filtering ==========
 
+// Clear the search box and reset the query. Called when switching views so
+// a leftover keyword doesn't silently filter the newly selected group.
+function clearSearch() {
+  state.searchQuery = '';
+  if (dom.searchInput) dom.searchInput.value = '';
+  if (dom.searchClear) dom.searchClear.style.display = 'none';
+}
+
 function getFilteredApps() {
   let apps = [...state.config.apps];
 
@@ -366,6 +378,7 @@ function renderSidebar() {
 
     item.addEventListener('click', () => {
       state.currentView = group.id;
+      clearSearch();
       renderAll();
     });
 
@@ -591,9 +604,13 @@ async function handleDrop(e, targetAppId) {
 
   if (draggedIndex === -1 || targetIndex === -1) return;
 
-  // Remove dragged app and insert at target position
+  // Remove dragged app, then insert it at the target's position (before the
+  // target), matching the visual "put it where the target is" expectation.
+  // When the dragged app originally sat before the target, the removal shifts
+  // the target index down by one.
   const [draggedApp] = state.config.apps.splice(draggedIndex, 1);
-  state.config.apps.splice(targetIndex, 0, draggedApp);
+  const insertAt = draggedIndex < targetIndex ? targetIndex - 1 : targetIndex;
+  state.config.apps.splice(insertAt, 0, draggedApp);
 
   // Switch to manual sort if not already
   if (state.config.settings.sortBy !== 'manual') {
@@ -1168,6 +1185,7 @@ function openSettingsModal() {
   // Float ball
   dom.floatBallToggle.checked = s.floatBallEnabled || false;
   updateFloatBallRowsVisibility(s.floatBallEnabled);
+  renderFloatBallIconPreview(s.floatBallIcon || null);
   dom.floatBallSingleSelect.value = s.floatBallSingleClick || 'recent';
   dom.floatBallDoubleSelect.value = s.floatBallDoubleClick || 'showMain';
   dom.floatBallPopupStyleSelect.value = s.floatBallPopupStyle || 'vertical';
@@ -1439,6 +1457,7 @@ async function handleAutoStartToggle(enabled) {
 }
 
 function updateFloatBallRowsVisibility(visible) {
+  dom.floatBallIconRow.style.display = visible ? '' : 'none';
   dom.floatBallClickRow.style.display = visible ? '' : 'none';
   dom.floatBallDblClickRow.style.display = visible ? '' : 'none';
   dom.floatBallPopupStyleRow.style.display = visible ? '' : 'none';
@@ -1517,6 +1536,47 @@ function resetFloatBallBarField(target) {
   }
 }
 
+// ========== Float-ball icon (Settings entry) ==========
+// Mirrors the float-ball right-click menu's "更换悬浮球图标…" / "恢复默认图标".
+// Saving via saveConfig() already notifies the ball window (floatball:settingsChanged),
+// so the icon updates live without a restart.
+
+function renderFloatBallIconPreview(dataUrl) {
+  const el = dom.floatBallIconPreview;
+  if (!el) return;
+  el.innerHTML = '';
+  if (dataUrl) {
+    const img = document.createElement('img');
+    img.src = dataUrl;
+    el.appendChild(img);
+    dom.floatBallIconResetBtn.style.display = '';
+  } else {
+    el.textContent = '🚀';
+    dom.floatBallIconResetBtn.style.display = 'none';
+  }
+}
+
+async function handleFloatBallIconUpload() {
+  const iconPath = await window.api.openIconFileDialog();
+  if (!iconPath) return;
+  const dataUrl = await window.api.readIconFile(iconPath);
+  if (!dataUrl) {
+    showToast('读取图标文件失败', 'error');
+    return;
+  }
+  state.config.settings.floatBallIcon = dataUrl;
+  renderFloatBallIconPreview(dataUrl);
+  await saveConfig();
+  showToast('悬浮球图标已更换', 'success');
+}
+
+async function handleFloatBallIconReset() {
+  state.config.settings.floatBallIcon = null;
+  renderFloatBallIconPreview(null);
+  await saveConfig();
+  showToast('已恢复默认图标', 'success');
+}
+
 async function handleCreateShortcut() {
   dom.createShortcutBtn.disabled = true;
   dom.createShortcutBtn.textContent = '创建中...';
@@ -1554,6 +1614,7 @@ function initEventListeners() {
     if (item.id === 'addGroupBtn') return;
     item.addEventListener('click', () => {
       state.currentView = item.dataset.view;
+      clearSearch();
       renderAll();
     });
   });
@@ -1630,6 +1691,8 @@ function initEventListeners() {
 
   // Float ball settings
   dom.floatBallToggle.addEventListener('change', (e) => handleFloatBallToggle(e.target.checked));
+  dom.floatBallIconBtn.addEventListener('click', handleFloatBallIconUpload);
+  dom.floatBallIconResetBtn.addEventListener('click', handleFloatBallIconReset);
   dom.floatBallSingleSelect.addEventListener('change', (e) => handleFloatBallSingleClickChange(e.target.value));
   dom.floatBallDoubleSelect.addEventListener('change', (e) => handleFloatBallDoubleClickChange(e.target.value));
   dom.floatBallPopupStyleSelect.addEventListener('change', (e) => handleFloatBallPopupStyleChange(e.target.value));
