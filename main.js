@@ -1,7 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, nativeImage, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 
 // Disable GPU acceleration for compatibility with remote/virtualized environments
 app.disableHardwareAcceleration();
@@ -989,6 +989,147 @@ ipcMain.handle('app:launch', async (_event, appPath, args) => {
   } catch (err) {
     console.error('Failed to launch:', err);
     return { success: false, error: err.message };
+  }
+});
+
+// Launch an .exe with elevation (UAC prompt). We shell out to PowerShell and
+// call ShellExecuteEx with lpVerb='runas' and nShow=SW_HIDE (0).
+//
+// Why ShellExecuteEx instead of `Start-Process -Verb RunAs -WindowStyle
+// Hidden`? On real Windows the UAC elevation path (consent.exe rebuilds the
+// process after the Secure Desktop prompt) silently drops the STARTUPINFO
+// window style, so -WindowStyle Hidden does NOT hide the elevated app's main
+// window. nShow is a direct ShellExecuteEx parameter and survives elevation,
+// so the app launches with its main window hidden — matching the quiet
+// background-launch behavior of the normal "启动" flow (only console/well-
+// behaved GUI apps respect it; apps that force-show their own window can't be
+// hidden from outside, that's a Windows limitation).
+//
+// The PowerShell command is passed via -EncodedCommand (UTF-16LE base64) so
+// we never have to fight Windows quoting/escaping rules for paths that
+// contain spaces, apostrophes, CJK characters, etc.
+ipcMain.handle('app:launchAsAdmin', async (_event, appPath, args) => {
+  // Write a small debug log next to main.js so failures can be diagnosed.
+  const log = (msg) => {
+    try {
+      fs.appendFileSync(path.join(__dirname, 'admin-launch.log'),
+        `[${new Date().toISOString()}] ${msg}\n`);
+    } catch (_e) { /* never crash the app for logging */ }
+  };
+  try {
+    log('launchAsAdmin called, appPath=' + appPath + ', args=' + args);
+    if (!appPath || !fs.existsSync(appPath)) {
+      const msg = '文件不存在: ' + appPath;
+      log('REJECT ' + msg);
+      return { success: false, error: msg };
+    }
+    const ext = path.extname(appPath).toLowerCase();
+    if (ext !== '.exe') {
+      const msg = '仅支持以管理员身份运行 .exe 程序';
+      log('REJECT ' + msg);
+      return { success: false, error: msg };
+    }
+
+    // Parse args the same way as app:launch (space / quoted-token split).
+    const argArray = args && args.trim()
+      ? args.match(/(?:[^\s"]+|"[^"]*")+/g)?.map(a => a.replace(/^"|"$/g, '')) || []
+      : [];
+    // ShellExecuteEx wants a single lpParameters string: each arg double-quoted.
+    const lpParams = argArray.map(a => `"${a.replace(/"/g, '""')}"`).join(' ');
+    const dirName = path.dirname(appPath);
+
+    // PowerShell single-quote escaping: '' inside a quoted string = literal '.
+    const q = (s) => String(s).replace(/'/g, "''");
+    const psScript = `
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+public struct SHELLEXECUTEINFO {
+  public int cbSize;
+  public uint fMask;
+  public IntPtr hwnd;
+  [MarshalAs(UnmanagedType.LPWStr)] public string lpVerb;
+  [MarshalAs(UnmanagedType.LPWStr)] public string lpFile;
+  [MarshalAs(UnmanagedType.LPWStr)] public string lpParameters;
+  [MarshalAs(UnmanagedType.LPWStr)] public string lpDirectory;
+  public int nShow;
+  public IntPtr hInstApp;
+  public IntPtr lpIDList;
+  [MarshalAs(UnmanagedType.LPWStr)] public string lpClass;
+  public IntPtr hkeyClass;
+  public uint dwHotKey;
+  public IntPtr hIcon;
+  public IntPtr hProcess;
+}
+public class ElevatedLaunch {
+  [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  public static extern bool ShellExecuteEx(ref SHELLEXECUTEINFO lpExecInfo);
+}
+"@
+$info = New-Object SHELLEXECUTEINFO
+$info.cbSize = [Runtime.InteropServices.Marshal]::SizeOf([type][SHELLEXECUTEINFO])
+$info.fMask = 0x00000040
+$info.lpVerb = 'runas'
+$info.lpFile = '${q(appPath)}'
+$info.lpParameters = '${q(lpParams)}'
+$info.lpDirectory = '${q(dirName)}'
+$info.nShow = 0
+$ok = [ElevatedLaunch]::ShellExecuteEx([ref]$info)
+if ($ok) { exit 0 }
+$code = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+[Console]::Error.WriteLine('ELEVATION_FAILED code=' + $code)
+exit 1
+`;
+    const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
+    log('psScript length=' + psScript.length + ', lpParams=' + lpParams);
+
+    // Prefer the absolute path of Windows PowerShell to avoid PATH surprises.
+    const psAbs = path.join(
+      process.env.windir || 'C:\\Windows',
+      'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    const psExe = fs.existsSync(psAbs) ? psAbs : 'powershell.exe';
+    log('psExe=' + psExe);
+
+    // execFile waits for the UAC result: exit 0 = elevated app launched;
+    // exit 1 = user cancelled (code 1223) or ShellExecuteEx failed.
+    const outcome = await new Promise((resolve) => {
+      execFile(psExe, ['-NoProfile', '-EncodedCommand', encoded], {
+        windowsHide: true,
+        timeout: 120000,
+        maxBuffer: 2 * 1024 * 1024
+      }, (err, stdout, stderr) => {
+        if (err) {
+          const timedOut = err.killed ? ' [timeout]' : '';
+          const stderrText = String(stderr || '');
+          const m = stderrText.match(/ELEVATION_FAILED code=(\d+)/);
+          const winErr = m ? parseInt(m[1], 10) : null;
+          log('EXECFILE ERROR: ' + err.message + timedOut +
+            (winErr != null ? ' winErr=' + winErr : ''));
+          if (winErr === 1223) {
+            // ERROR_CANCELLED: the user pressed "No" on the UAC dialog.
+            resolve({ ok: false, error: '您取消了管理员权限确认', cancelled: true });
+          } else {
+            resolve({
+              ok: false,
+              error: '提权失败' + (winErr != null ? ` (Windows 错误码 ${winErr})` : '') + timedOut,
+              cancelled: false
+            });
+          }
+        } else {
+          log('EXECFILE OK, elevated process launched (hidden)');
+          resolve({ ok: true });
+        }
+      });
+    });
+
+    if (outcome.ok) {
+      return { success: true };
+    }
+    return { success: false, error: outcome.error, cancelled: !!outcome.cancelled };
+  } catch (err) {
+    log('EXCEPTION: ' + (err && err.stack ? err.stack : err));
+    return { success: false, error: err.message || String(err) };
   }
 });
 

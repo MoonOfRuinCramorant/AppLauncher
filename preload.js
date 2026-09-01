@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('api', {
   // App operations
   getFileIcon: (filePath) => ipcRenderer.invoke('app:getFileIcon', filePath),
   launchApp: (appPath, args) => ipcRenderer.invoke('app:launch', appPath, args),
+  launchAppAsAdmin: (appPath, args) => ipcRenderer.invoke('app:launchAsAdmin', appPath, args),
   openInExplorer: (filePath) => ipcRenderer.invoke('app:openInExplorer', filePath),
   getFileName: (filePath) => ipcRenderer.invoke('app:getFileName', filePath),
   readIconFile: (filePath) => ipcRenderer.invoke('app:readIconFile', filePath),

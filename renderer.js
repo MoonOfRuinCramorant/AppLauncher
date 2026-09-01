@@ -179,6 +179,7 @@ const dom = {
   // Context menu
   contextMenu: $('contextMenu'),
   ctxLaunch: $('ctxLaunch'),
+  ctxLaunchAsAdmin: $('ctxLaunchAsAdmin'),
   ctxOpenLocation: $('ctxOpenLocation'),
   ctxEdit: $('ctxEdit'),
   ctxMoveTo: $('ctxMoveTo'),
@@ -1076,6 +1077,11 @@ function showContextMenu(appId, x, y) {
   const isShellPath = app.path && (app.path.startsWith('shell:') || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(app.path));
   dom.ctxOpenLocation.style.display = isShellPath ? 'none' : '';
 
+  // "以管理员身份运行" only makes sense for real .exe programs — hide it for
+  // shell paths, URI schemes, .lnk shortcuts and documents.
+  const isExe = app.path && app.path.toLowerCase().endsWith('.exe');
+  dom.ctxLaunchAsAdmin.style.display = isExe ? '' : 'none';
+
   dom.ctxSubmenu.innerHTML = `
     <div class="submenu-item ${!app.groupId ? 'active' : ''}" data-group="">
       <span class="submenu-item-icon">📭</span> 未分组
@@ -1675,6 +1681,29 @@ function initEventListeners() {
     if (state.contextMenuAppId) {
       launchApp(state.contextMenuAppId);
       hideContextMenu();
+    }
+  });
+
+  dom.ctxLaunchAsAdmin.addEventListener('click', async () => {
+    const app = state.config.apps.find(a => a.id === state.contextMenuAppId);
+    if (!app) return;
+    hideContextMenu();
+    try {
+      const result = await window.api.launchAppAsAdmin(app.path, app.args || '');
+      if (result && result.success) {
+        // Mirrors the normal launch flow: record the launch attempt so the app
+        // shows up in "recent / most used" (UAC may still be cancelled by the
+        // user, but we treat the click as a launch attempt).
+        app.lastLaunched = new Date().toISOString();
+        app.launchCount = (app.launchCount || 0) + 1;
+        await saveConfig();
+        showToast('已请求以管理员身份运行（隐藏窗口），请在弹出的 UAC 窗口中选择“是”', 'success');
+      } else {
+        showToast(result && result.error ? result.error : '无法以管理员身份运行', 'error');
+      }
+    } catch (e) {
+      console.error('launchAsAdmin error:', e);
+      showToast('以管理员身份运行失败: ' + (e && e.message ? e.message : e), 'error');
     }
   });
 
