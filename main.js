@@ -1,7 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, nativeImage, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { spawn, execFile } = require('child_process');
+const { spawn, execFile, execFileSync } = require('child_process');
 
 // Disable GPU acceleration for compatibility with remote/virtualized environments
 app.disableHardwareAcceleration();
@@ -822,6 +822,7 @@ ipcMain.handle('dialog:openFile', async () => {
     title: '选择应用程序或文件',
     filters: [
       { name: '应用程序', extensions: ['exe', 'bat', 'cmd', 'lnk', 'ps1'] },
+      { name: '网址快捷方式', extensions: ['url'] },
       { name: '文档文件', extensions: ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'pdf', 'txt', 'md'] },
       { name: '媒体文件', extensions: ['mp4', 'avi', 'mkv', 'mov', 'flv', 'wmv', 'mp3', 'wav', 'flac', 'm4a'] },
       { name: '图片文件', extensions: ['png', 'jpg', 'jpeg', 'bmp', 'gif', 'webp', 'svg', 'ico'] },
@@ -900,9 +901,8 @@ ipcMain.handle('app:getFileIcon', async (_event, filePath) => {
       // Return null for shell paths where we can't extract an icon
       return null;
     }
-    // For URI schemes (e.g. ms-settings:), return null — use emoji icon instead
-    // Exclude Windows drive letter paths like C:\ or D:/
-    if (filePath && /^[a-zA-Z][a-zA-Z0-9+.-]*:(?![/\\])/.test(filePath)) {
+    // For URI schemes (e.g. steam://, ms-settings:), return null — use emoji icon instead
+    if (isUriSchemePath(filePath)) {
       return null;
     }
 
@@ -953,6 +953,20 @@ ipcMain.handle('app:getFileIcon', async (_event, filePath) => {
   }
 });
 
+// Detect a URI-scheme path, e.g. "steam://rungameid/3412900", "ms-settings:",
+// "hxs://...". Windows drive-letter paths ("C:\\foo", "D:/bar") also match the
+// generic scheme pattern, so exclude single-letter schemes followed by a
+// slash — those are local paths, not URIs.
+function isUriSchemePath(p) {
+  if (!p) return false;
+  const m = String(p).match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
+  if (!m) return false;
+  // A single-letter "scheme" is a Windows drive letter ("C:\\foo", "C:"),
+  // not a URI.
+  if (m[1].length === 1) return false;
+  return true;
+}
+
 ipcMain.handle('app:launch', async (_event, appPath, args) => {
   try {
     // Handle shell paths (system folders like Recycle Bin, This PC, etc.)
@@ -962,8 +976,8 @@ ipcMain.handle('app:launch', async (_event, appPath, args) => {
       return { success: true };
     }
 
-    // Handle URI schemes (e.g. ms-settings: for Windows Settings)
-    if (appPath && /^[a-zA-Z][a-zA-Z0-9+.-]*:(?![/\\])/.test(appPath) && !appPath.startsWith('shell:')) {
+    // Handle URI schemes (e.g. steam://rungameid/..., ms-settings:)
+    if (isUriSchemePath(appPath)) {
       await shell.openExternal(appPath);
       return { success: true };
     }
@@ -1149,6 +1163,209 @@ ipcMain.handle('app:getFileName', (_event, filePath) => {
     return path.basename(filePath, ext);
   } catch {
     return '未命名应用';
+  }
+});
+
+// Parse a Windows ".url" Internet shortcut (the kind Steam creates for game
+// desktop shortcuts) and return the URL it points to, e.g.
+// "steam://rungameid/3412900". Returns '' when the file can't be parsed.
+ipcMain.handle('app:resolveUrlShortcut', (_event, filePath) => {
+  try {
+    if (!filePath || path.extname(filePath).toLowerCase() !== '.url') return '';
+    const content = fs.readFileSync(filePath, 'utf8');
+    const m = content.match(/^\s*URL\s*=(.+)$/mi);
+    return m ? m[1].trim() : '';
+  } catch {
+    return '';
+  }
+});
+
+// ========== Steam local install lookup ==========
+// Steam games launched through "steam://rungameid/<id>" are installed under a
+// Steam library folder (which may live on an external drive). To show the real
+// program icon we resolve the installed .exe and read its icon from the file
+// system — no network needed, and the icon matches what Explorer shows.
+
+// Steam install path: registry first (via PowerShell so CJK paths survive),
+// then the two standard locations.
+function getSteamInstallPath() {
+  const psCmd =
+    "$k = @('HKLM:\\SOFTWARE\\WOW6432Node\\Valve\\Steam','HKLM:\\SOFTWARE\\Valve\\Steam','HKCU:\\SOFTWARE\\Valve\\Steam');" +
+    "foreach ($i in $k) { $p = Get-ItemProperty -Path $i -Name InstallPath -ErrorAction SilentlyContinue;" +
+    "if ($p -and $p.InstallPath) { Write-Output $p.InstallPath; break } }";
+  try {
+    const out = execFileSync('powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', psCmd],
+      { encoding: 'utf8', windowsHide: true, timeout: 8000 });
+    const line = String(out || '').split(/\r?\n/).map(s => s.trim()).find(Boolean);
+    if (line && fs.existsSync(line)) return line;
+  } catch (_e) { /* fall through to defaults */ }
+
+  const defaults = [
+    'C:\\Program Files (x86)\\Steam',
+    'C:\\Program Files\\Steam'
+  ];
+  return defaults.find(p => fs.existsSync(p)) || null;
+}
+
+// All Steam library folders (the install dir itself + every external/library
+// drive listed in libraryfolders.vdf).
+function getSteamLibraryPaths() {
+  const installPath = getSteamInstallPath();
+  if (!installPath) return [];
+  const libs = [];
+  const add = (p) => {
+    if (!p) return;
+    const clean = p.replace(/\\\\/g, '\\');
+    if (clean && !libs.includes(clean) && fs.existsSync(clean)) libs.push(clean);
+  };
+  add(installPath);
+  try {
+    const vdfPath = path.join(installPath, 'steamapps', 'libraryfolders.vdf');
+    if (fs.existsSync(vdfPath)) {
+      const vdf = fs.readFileSync(vdfPath, 'utf8');
+      // New format: "path" "D:\\Steam"
+      let m;
+      const reNew = /"path"\s*"([^"]+)"/g;
+      while ((m = reNew.exec(vdf))) add(m[1]);
+      // Old format: "1" "D:\\Steam"
+      const reOld = /^\s*"\d+"\s*"([A-Za-z]:\\\\?[^"]+)"/gm;
+      while ((m = reOld.exec(vdf))) add(m[1]);
+    }
+  } catch (_e) { /* ignore unreadable vdf */ }
+  return libs;
+}
+
+// Read the fields we need out of an appmanifest_<id>.acf file.
+function parseSteamManifest(manifestPath) {
+  const raw = fs.readFileSync(manifestPath, 'utf8');
+  const pick = (key) => {
+    const m = raw.match(new RegExp('"' + key + '"\\s*"([^"]*)"'));
+    return m ? m[1] : '';
+  };
+  return { name: pick('name'), installdir: pick('installdir') };
+}
+
+// Executables that are never the game itself.
+const STEAM_EXE_BLACKLIST = [
+  'unitycrashhandler', 'crashhandler', 'unins', 'uninstall', 'vcredist',
+  'directx', 'dxsetup', 'dxwebsetup', 'dotnet', 'oalinst', 'redist',
+  'battleye', 'easyanticheat', 'eac', 'physx', 'xna', 'installer', 'setup'
+];
+
+// Pick the executable most likely to be the game. Scoring (highest wins):
+// name matching the install folder > shallow path > bigger binary. Without the
+// name match, helper tools (e.g. GodotWorkshopUtility.exe) can outweigh the
+// real game exe (Brotato.exe).
+function findGameExe(dir, installDirName = '') {
+  if (!dir || !fs.existsSync(dir)) return '';
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]/g, '');
+  const keyA = norm(installDirName);
+  const candidates = [];
+  const walk = (current, depth) => {
+    if (depth > 3) return;
+    let entries = [];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch (_e) { return; }
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        walk(full, depth + 1);
+      } else if (entry.isFile() && path.extname(entry.name).toLowerCase() === '.exe') {
+        const lower = entry.name.toLowerCase();
+        if (STEAM_EXE_BLACKLIST.some(b => lower.includes(b))) continue;
+        let size = 0;
+        try { size = fs.statSync(full).size; } catch (_e) { size = 0; }
+        const base = path.basename(entry.name, '.exe');
+        const keyB = norm(base);
+        let score = 0;
+        if (keyA && keyB) {
+          if (keyB === keyA) score += 1000;
+          else if (keyB.includes(keyA) || keyA.includes(keyB)) score += 500;
+        }
+        score -= depth * 50;
+        score += Math.min(100, size / (1024 * 1024)); // up to ~100MB helps
+        candidates.push({ full, score });
+      }
+    }
+  };
+  walk(dir, 0);
+  if (!candidates.length) return '';
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0].full;
+}
+
+// Enrich a "steam://rungameid/<id>" link with the real game name and icon.
+// Priority: locally installed .exe icon (works offline, matches Explorer) →
+// Steam store header image (needs network) → nothing (caller falls back to
+// a 🎮 emoji).
+ipcMain.handle('app:resolveSteamAppInfo', async (_event, url) => {
+  try {
+    const m = String(url || '').match(/^steam:\/\/rungameid\/(\d+)/i);
+    if (!m) return null;
+    const appId = m[1];
+
+    let name = '';
+    let exePath = '';
+    let iconDataUrl = null;
+
+    // 1. Local install: name + icon come from the actual game executable.
+    try {
+      for (const lib of getSteamLibraryPaths()) {
+        const manifest = path.join(lib, 'steamapps', `appmanifest_${appId}.acf`);
+        if (!fs.existsSync(manifest)) continue;
+        const info = parseSteamManifest(manifest);
+        if (info.name) name = info.name;
+        if (info.installdir) {
+          const gameDir = /^[A-Za-z]:[\\/]/.test(info.installdir)
+            ? info.installdir
+            : path.join(lib, 'steamapps', 'common', info.installdir);
+          exePath = findGameExe(gameDir, info.installdir);
+        }
+        break;
+      }
+      if (exePath && fs.existsSync(exePath)) {
+        const icon = await app.getFileIcon(exePath, { size: 'large' });
+        const dataUrl = icon.toDataURL();
+        if (dataUrl && dataUrl.length > 200) iconDataUrl = dataUrl;
+      }
+    } catch (_e) { /* local lookup failed — try the network below */ }
+
+    // 2. Network fallback: store name + header image (e.g. game installed on
+    // a drive that is currently disconnected).
+    if (!name || !iconDataUrl) {
+      try {
+        const res = await fetch(
+          `https://store.steampowered.com/api/appdetails?appids=${appId}&l=schinese`,
+          { signal: AbortSignal.timeout(5000) }
+        );
+        if (res.ok) {
+          const data = await res.json();
+          const info = data && data[appId] && data[appId].data;
+          if (!name && info && info.name) name = info.name;
+        }
+      } catch (_e) { /* offline */ }
+      if (!iconDataUrl) {
+        try {
+          const imgRes = await fetch(
+            `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/header.jpg`,
+            { signal: AbortSignal.timeout(5000) }
+          );
+          if (imgRes.ok) {
+            const buf = Buffer.from(await imgRes.arrayBuffer());
+            if (buf.length > 0 && buf.length < 2 * 1024 * 1024) {
+              iconDataUrl = 'data:image/jpeg;base64,' + buf.toString('base64');
+            }
+          }
+        } catch (_e) { /* offline */ }
+      }
+    }
+
+    if (!name && !iconDataUrl) return null;
+    return { name: name || '', iconDataUrl, exePath: exePath || '' };
+  } catch {
+    return null;
   }
 });
 
@@ -1390,8 +1607,8 @@ ipcMain.handle('floatball:launchApp', async (_event, appId) => {
     if (appItem.path && appItem.path.startsWith('shell:')) {
       const child = spawn('explorer.exe', [appItem.path], { detached: true, stdio: 'ignore' });
       child.unref();
-    } else if (appItem.path && /^[a-zA-Z][a-zA-Z0-9+.-]*:(?![/\\])/.test(appItem.path) && !appItem.path.startsWith('shell:')) {
-      // Handle URI schemes (e.g. ms-settings:)
+    } else if (isUriSchemePath(appItem.path)) {
+      // Handle URI schemes (e.g. steam://rungameid/..., ms-settings:)
       await shell.openExternal(appItem.path);
     } else {
       if (!appItem.path || !fs.existsSync(appItem.path)) {

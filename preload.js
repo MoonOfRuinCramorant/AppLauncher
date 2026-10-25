@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('api', {
   launchAppAsAdmin: (appPath, args) => ipcRenderer.invoke('app:launchAsAdmin', appPath, args),
   openInExplorer: (filePath) => ipcRenderer.invoke('app:openInExplorer', filePath),
   getFileName: (filePath) => ipcRenderer.invoke('app:getFileName', filePath),
+  resolveUrlShortcut: (filePath) => ipcRenderer.invoke('app:resolveUrlShortcut', filePath),
+  resolveSteamAppInfo: (url) => ipcRenderer.invoke('app:resolveSteamAppInfo', url),
   readIconFile: (filePath) => ipcRenderer.invoke('app:readIconFile', filePath),
   readImageFile: (filePath) => ipcRenderer.invoke('app:readImageFile', filePath),
 

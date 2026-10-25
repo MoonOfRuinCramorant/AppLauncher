@@ -228,6 +228,58 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+// Detect a URI-scheme path, e.g. "steam://rungameid/3412900", "ms-settings:".
+// Single-letter "schemes" followed by a slash are Windows drive letters
+// ("C:\\foo"), not URIs.
+function isUriSchemePath(p) {
+  if (!p) return false;
+  const m = String(p).match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
+  if (!m) return false;
+  // A single-letter "scheme" is a Windows drive letter ("C:\\foo", "C:"),
+  // not a URI.
+  if (m[1].length === 1) return false;
+  return true;
+}
+
+// Fill the add/edit modal with a URI-scheme app (e.g. a steam:// game link).
+// Tries to enrich Steam links with the real game name + header image via the
+// main process; falls back to a 🎮 emoji icon when that fails.
+async function applyUriApp(url, fallbackName = '') {
+  dom.appPathInput.value = url;
+  if (!dom.appNameInput.value) {
+    dom.appNameInput.value = fallbackName || url;
+  }
+  state.pendingIconPath = null;
+  state.isDefaultIcon = true;
+  dom.iconPreview.innerHTML = '<span class="icon-placeholder" style="font-size:36px;">🎮</span>';
+  dom.iconFileName.textContent = '正在获取链接信息…';
+  dom.resetIconBtn.style.display = 'none';
+
+  let iconData = '🎮';
+  let name = '';
+  let info = null;
+  if (window.api.resolveSteamAppInfo) {
+    info = await window.api.resolveSteamAppInfo(url);
+    if (info) {
+      name = info.name || '';
+      if (info.iconDataUrl) iconData = info.iconDataUrl;
+    }
+  }
+  // Only apply if the user hasn't picked something else meanwhile
+  if (dom.appPathInput.value === url) {
+    state.pendingIconData = iconData;
+    if (iconData.startsWith('data:')) {
+      dom.iconPreview.innerHTML = `<img src="${iconData}" alt="icon" />`;
+      dom.iconFileName.textContent = info && info.exePath ? '游戏程序图标' : 'Steam 游戏封面';
+    } else {
+      dom.iconFileName.textContent = '游戏链接';
+    }
+    if (name && dom.appNameInput.value === (fallbackName || url)) {
+      dom.appNameInput.value = name;
+    }
+  }
+}
+
 function showToast(msg, type = 'success') {
   dom.toast.className = 'toast toast-' + type;
   dom.toastIcon.textContent = type === 'success' ? '✓' : type === 'error' ? '✕' : 'ℹ';
@@ -779,6 +831,20 @@ async function handleBrowse() {
   const filePath = await window.api.openFileDialog();
   if (!filePath) return;
 
+  // ".url" Internet shortcuts (the kind Steam creates for game desktop
+  // shortcuts) often point at a URL scheme like "steam://rungameid/3412900".
+  // Store the URL itself so it can be launched through the system handler.
+  if (filePath.toLowerCase().endsWith('.url')) {
+    const url = await window.api.resolveUrlShortcut(filePath);
+    if (url && isUriSchemePath(url)) {
+      const fileName = await window.api.getFileName(filePath);
+      await applyUriApp(url, fileName || '');
+      return;
+    }
+    // http(s) and unparseable .url shortcuts: keep the file path, Windows
+    // opens them with the default browser via shell.openPath.
+  }
+
   dom.appPathInput.value = filePath;
 
   if (!dom.appNameInput.value) {
@@ -899,8 +965,8 @@ async function handleResetIcon() {
     dom.iconFileName.textContent = '选择应用后自动提取图标';
     return;
   }
-  // For shell paths or URI schemes, try to get system icon, fall back to folder emoji
-  if (filePath.startsWith('shell:') || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(filePath)) {
+  // For shell paths or URI schemes, try to get system icon, fall back to emoji
+  if (filePath.startsWith('shell:')) {
     const iconData = await window.api.getFileIcon(filePath);
     if (iconData) {
       state.pendingIconData = iconData;
@@ -912,6 +978,10 @@ async function handleResetIcon() {
       dom.iconFileName.textContent = '系统文件夹';
     }
     dom.resetIconBtn.style.display = 'none';
+    return;
+  }
+  if (isUriSchemePath(filePath)) {
+    await applyUriApp(filePath.trim());
     return;
   }
   const iconData = await window.api.getFileIcon(filePath);
@@ -1090,8 +1160,8 @@ function showContextMenu(appId, x, y) {
   const app = state.config.apps.find(a => a.id === appId);
   if (!app) return;
 
-  // Hide "打开文件位置" for system folders (shell paths) and URI schemes (ms-settings:)
-  const isShellPath = app.path && (app.path.startsWith('shell:') || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(app.path));
+  // Hide "打开文件位置" for system folders (shell paths) and URI schemes (steam://, ms-settings:)
+  const isShellPath = app.path && (app.path.startsWith('shell:') || isUriSchemePath(app.path));
   dom.ctxOpenLocation.style.display = isShellPath ? 'none' : '';
 
   // "以管理员身份运行" only makes sense for real .exe programs — hide it for
@@ -1608,6 +1678,25 @@ async function checkShortcutStatus() {
 
 // ========== Event Listeners ==========
 
+// Register "click on the dark overlay to close" for a modal.
+// A plain click listener is NOT enough: when the user drag-selects text in an
+// input and releases the mouse outside the modal box (e.g. dragging all the
+// way to the left edge), the browser fires a click event on the overlay
+// (the common ancestor of the mousedown/mouseup targets), which used to close
+// the modal unexpectedly. Requiring the mousedown itself to start on the
+// overlay fixes that while keeping the normal "click outside to close".
+function registerOverlayClose(overlay, closeFn) {
+  let mousedownOnOverlay = false;
+  overlay.addEventListener('mousedown', (e) => {
+    mousedownOnOverlay = (e.target === overlay);
+  });
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay && mousedownOnOverlay) closeFn();
+    mousedownOnOverlay = false;
+  });
+}
+
+
 function initEventListeners() {
   // Sidebar navigation - built-in views
   document.querySelectorAll('.nav-item[data-view]').forEach(item => {
@@ -1654,9 +1743,7 @@ function initEventListeners() {
   // Settings modal
   dom.settingsClose.addEventListener('click', closeSettingsModal);
   dom.settingsCloseBtn.addEventListener('click', closeSettingsModal);
-  dom.settingsModal.addEventListener('click', (e) => {
-    if (e.target === dom.settingsModal) closeSettingsModal();
-  });
+  registerOverlayClose(dom.settingsModal, closeSettingsModal);
 
   // Theme selector
   dom.themeSelector.addEventListener('click', (e) => {
@@ -1676,9 +1763,7 @@ function initEventListeners() {
   dom.cropCancel.addEventListener('click', closeCropModal);
   dom.cropFullBtn.addEventListener('click', handleCropFull);
   dom.cropConfirmBtn.addEventListener('click', handleCropConfirm);
-  dom.cropModal.addEventListener('click', (e) => {
-    if (e.target === dom.cropModal) closeCropModal();
-  });
+  registerOverlayClose(dom.cropModal, closeCropModal);
   dom.cropContainer.addEventListener('mousedown', onCropMouseDown);
 
   // Default view
@@ -1713,6 +1798,12 @@ function initEventListeners() {
 
   // App modal
   dom.browseBtn.addEventListener('click', handleBrowse);
+  // Path input is editable: allow typing/pasting a URI link directly
+  // (e.g. "steam://rungameid/3412900") without browsing for a file.
+  dom.appPathInput.addEventListener('change', () => {
+    const value = dom.appPathInput.value.trim();
+    if (value && isUriSchemePath(value)) applyUriApp(value);
+  });
   dom.browseFolderBtn.addEventListener('click', handleBrowseFolder);
   dom.browseSystemBtn.addEventListener('click', openSystemFolderModal);
   dom.customIconBtn.addEventListener('click', handleCustomIcon);
@@ -1720,24 +1811,18 @@ function initEventListeners() {
   dom.modalSave.addEventListener('click', handleSaveApp);
   dom.modalCancel.addEventListener('click', closeAppModal);
   dom.modalClose.addEventListener('click', closeAppModal);
-  dom.appModal.addEventListener('click', (e) => {
-    if (e.target === dom.appModal) closeAppModal();
-  });
+  registerOverlayClose(dom.appModal, closeAppModal);
 
   // System folder modal
   dom.systemFolderClose.addEventListener('click', closeSystemFolderModal);
-  dom.systemFolderModal.addEventListener('click', (e) => {
-    if (e.target === dom.systemFolderModal) closeSystemFolderModal();
-  });
+  registerOverlayClose(dom.systemFolderModal, closeSystemFolderModal);
 
   // Group modal
   dom.groupModalSave.addEventListener('click', handleSaveGroup);
   dom.groupModalCancel.addEventListener('click', closeGroupModal);
   dom.groupModalClose.addEventListener('click', closeGroupModal);
   dom.groupDeleteBtn.addEventListener('click', handleDeleteGroup);
-  dom.groupModal.addEventListener('click', (e) => {
-    if (e.target === dom.groupModal) closeGroupModal();
-  });
+  registerOverlayClose(dom.groupModal, closeGroupModal);
 
   // Context menu items
   dom.ctxLaunch.addEventListener('click', () => {
@@ -1823,9 +1908,7 @@ function initEventListeners() {
       cb();
     }
   });
-  dom.confirmDialog.addEventListener('click', (e) => {
-    if (e.target === dom.confirmDialog) hideConfirm();
-  });
+  registerOverlayClose(dom.confirmDialog, hideConfirm);
 
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
